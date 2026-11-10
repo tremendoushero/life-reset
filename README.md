@@ -120,3 +120,4 @@ To apply:
 ## 📄 License & Health Notice
 © 2026 LIFE RESET. All rights reserved.
 *Notice: LIFE RESET is an executive life management application designed with ADHD-friendly principles. It does not diagnose, treat, or replace medical or mental health care.*
+

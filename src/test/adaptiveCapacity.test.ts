@@ -73,3 +73,4 @@ describe('Signature Feature: Adaptive Capacity Engine', () => {
     expect(topAction?.title).toBe('Pay urgent electric bill');
   });
 });
+

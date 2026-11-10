@@ -133,3 +133,4 @@ export const CapacityCheckIn: React.FC = () => {
     </Card>
   );
 };
+

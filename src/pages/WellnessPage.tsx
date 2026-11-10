@@ -519,3 +519,4 @@ export const WellnessPage: React.FC = () => {
     </div>
   );
 };
+

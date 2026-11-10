@@ -465,3 +465,4 @@ export const MoneyPage: React.FC = () => {
     </div>
   );
 };
+

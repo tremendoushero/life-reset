@@ -261,3 +261,4 @@ export const GoalsPage: React.FC = () => {
     </div>
   );
 };
+

@@ -37,3 +37,4 @@ describe('Personal Finance Calculations', () => {
     expect(pendingSum).toBe(60);
   });
 });
+

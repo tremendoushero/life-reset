@@ -190,3 +190,4 @@ export const MindPage: React.FC = () => {
     </div>
   );
 };
+

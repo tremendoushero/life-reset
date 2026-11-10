@@ -181,3 +181,4 @@ export const DesktopSidebar: React.FC<DesktopSidebarProps> = ({ onOpenRestart })
     </aside>
   );
 };
+

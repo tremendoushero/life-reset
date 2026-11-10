@@ -335,3 +335,4 @@ export const PlanPage: React.FC = () => {
     </div>
   );
 };
+

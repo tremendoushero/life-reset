@@ -370,3 +370,4 @@ export const HouseholdPage: React.FC = () => {
     </div>
   );
 };
+

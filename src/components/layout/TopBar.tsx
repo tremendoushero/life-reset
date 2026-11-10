@@ -172,3 +172,4 @@ export const TopBar: React.FC<TopBarProps> = ({ onOpenQuickAdd, onOpenRestart })
     </header>
   );
 };
+

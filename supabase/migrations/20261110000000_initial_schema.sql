@@ -585,3 +585,4 @@ BEGIN
     DROP POLICY IF EXISTS "payment_events_select" ON public.payment_events;
     CREATE POLICY "payment_events_select" ON public.payment_events FOR SELECT USING (auth.uid() = user_id);
 END $$;
+

@@ -162,3 +162,4 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({ isOpen, onClose })
     </Modal>
   );
 };
+

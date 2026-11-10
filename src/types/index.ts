@@ -345,3 +345,4 @@ export interface Entitlement {
   granted_at: string;
   expires_at?: string;
 }
+

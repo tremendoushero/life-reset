@@ -61,3 +61,4 @@ export const AdaptiveModeSelector: React.FC = () => {
     </div>
   );
 };
+

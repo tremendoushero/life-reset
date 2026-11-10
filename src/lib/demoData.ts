@@ -561,3 +561,4 @@ export const demoInventory: HouseholdInventoryItem[] = [
   { id: 'inv-2', user_id: DEMO_USER_ID, item_name: 'Dishwasher Pods', category: 'supplies', quantity: 8, reorder_level: 10, location: 'Under sink' },
   { id: 'inv-3', user_id: DEMO_USER_ID, item_name: 'AA Rechargeable Batteries', category: 'supplies', quantity: 4, reorder_level: 2, location: 'Desk drawer' },
 ];
+

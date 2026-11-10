@@ -70,6 +70,8 @@ interface DataContextType {
   toggleSubtask: (taskId: string, subtaskId: string) => Promise<void>;
   deleteSubtask: (taskId: string, subtaskId: string) => Promise<void>;
   breakdownTaskIntoSteps: (taskId: string, steps: { title: string; estimated_minutes: number }[]) => Promise<void>;
+  setTopThreeTaskIds: (ids: string[]) => Promise<void>;
+  toggleTopThree: (id: string) => Promise<{ success: boolean; message?: string }>;
 
   // Brain Dump
   brainDumps: BrainDumpEntry[];
@@ -236,6 +238,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
             goalsRes,
             habitsRes,
             moodsRes,
+            energiesRes,
             billsRes,
             adminRes,
           ] = await Promise.all([
@@ -243,7 +246,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
             supabase.from('brain_dump_entries').select('*').eq('user_id', user.id),
             supabase.from('goals').select('*, milestones:goal_milestones(*)').eq('user_id', user.id),
             supabase.from('habits').select('*').eq('user_id', user.id),
-            supabase.from('mood_entries').select('*').eq('user_id', user.id),
+            supabase.from('mood_entries').select('*').eq('user_id', user.id).order('date', { ascending: false }),
+            supabase.from('energy_entries').select('*').eq('user_id', user.id).order('date', { ascending: false }),
             supabase.from('bills').select('*').eq('user_id', user.id),
             supabase.from('life_admin_items').select('*').eq('user_id', user.id),
           ]);
@@ -253,6 +257,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
           if (goalsRes.data && goalsRes.data.length > 0) setGoals(goalsRes.data);
           if (habitsRes.data && habitsRes.data.length > 0) setHabits(habitsRes.data);
           if (moodsRes.data && moodsRes.data.length > 0) setMoods(moodsRes.data);
+          if (energiesRes.data && energiesRes.data.length > 0) setEnergies(energiesRes.data);
           if (billsRes.data && billsRes.data.length > 0) setBills(billsRes.data);
           if (adminRes.data && adminRes.data.length > 0) setLifeAdmin(adminRes.data);
           setSaveState('saved');
@@ -415,6 +420,57 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     );
   };
 
+  // Today's Top Three Management with database persistence
+  const setTopThreeTaskIds = async (ids: string[]) => {
+    const limitedIds = ids.slice(0, 3);
+    setTasks(prev =>
+      prev.map(t => ({
+        ...t,
+        is_top_three: limitedIds.includes(t.id),
+      }))
+    );
+
+    if (isSupabaseConfigured && user && !isDemo) {
+      try {
+        setSaveState('saving');
+        // Update each task's is_top_three in Supabase
+        await Promise.all(
+          tasks.map(t => {
+            const shouldBeTopThree = limitedIds.includes(t.id);
+            if (t.is_top_three !== shouldBeTopThree) {
+              return supabase.from('tasks').update({ is_top_three: shouldBeTopThree }).eq('id', t.id);
+            }
+            return Promise.resolve();
+          })
+        );
+        setSaveState('saved');
+      } catch (e) {
+        setSaveState('offline');
+      }
+    }
+  };
+
+  const toggleTopThree = async (id: string): Promise<{ success: boolean; message?: string }> => {
+    const targetTask = tasks.find(t => t.id === id);
+    if (!targetTask) return { success: false, message: 'Task not found' };
+
+    const currentTopThree = tasks.filter(t => t.is_top_three);
+
+    if (targetTask.is_top_three) {
+      await updateTask(id, { is_top_three: false });
+      return { success: true };
+    } else {
+      if (currentTopThree.length >= 3) {
+        return {
+          success: false,
+          message: "You already have 3 priority tasks selected. Deselect one first to maintain focus!",
+        };
+      }
+      await updateTask(id, { is_top_three: true });
+      return { success: true };
+    }
+  };
+
   // ----------------------------------------------------
   // Brain Dump Actions
   // ----------------------------------------------------
@@ -547,11 +603,11 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   // ----------------------------------------------------
-  // Wellness & Mind
+  // Wellness & Mind with Supabase Persistence
   // ----------------------------------------------------
   const addMood = async (mood: MoodEntry['mood'], notes?: string, tags?: string[]) => {
     const entry: MoodEntry = {
-      id: `m_${Date.now()}`,
+      id: `m_${Date.now()}_${Math.random().toString(36).substring(7)}`,
       user_id: user?.id || 'demo_user',
       date: format(new Date(), 'yyyy-MM-dd'),
       mood,
@@ -560,11 +616,22 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       created_at: new Date().toISOString(),
     };
     setMoods(prev => [entry, ...prev]);
+
+    if (isSupabaseConfigured && user && !isDemo) {
+      try {
+        setSaveState('saving');
+        await supabase.from('mood_entries').insert(entry);
+        setSaveState('saved');
+      } catch (e) {
+        offlineQueue.add('mood_entries', 'insert', entry);
+        setSaveState('offline');
+      }
+    }
   };
 
   const addEnergy = async (level: EnergyEntry['energy_level'], timeOfDay: EnergyEntry['time_of_day'] = 'morning', notes?: string) => {
     const entry: EnergyEntry = {
-      id: `e_${Date.now()}`,
+      id: `e_${Date.now()}_${Math.random().toString(36).substring(7)}`,
       user_id: user?.id || 'demo_user',
       date: format(new Date(), 'yyyy-MM-dd'),
       energy_level: level,
@@ -573,6 +640,20 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       created_at: new Date().toISOString(),
     };
     setEnergies(prev => [entry, ...prev]);
+
+    if (isSupabaseConfigured && user && !isDemo) {
+      try {
+        setSaveState('saving');
+        await Promise.all([
+          supabase.from('energy_entries').insert(entry),
+          supabase.from('profiles').update({ planning_capacity: level }).eq('id', user.id),
+        ]);
+        setSaveState('saved');
+      } catch (e) {
+        offlineQueue.add('energy_entries', 'insert', entry);
+        setSaveState('offline');
+      }
+    }
   };
 
   const addJournal = async (content: string, title?: string, prompt?: string, tags?: string[]) => {
@@ -840,6 +921,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         toggleSubtask,
         deleteSubtask,
         breakdownTaskIntoSteps,
+        setTopThreeTaskIds,
+        toggleTopThree,
         brainDumps,
         addBrainDump,
         convertBrainDumpToTask,
@@ -924,3 +1007,4 @@ export const useData = () => {
   }
   return context;
 };
+

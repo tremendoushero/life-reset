@@ -381,3 +381,4 @@ export const LifeAdminPage: React.FC = () => {
     </div>
   );
 };
+

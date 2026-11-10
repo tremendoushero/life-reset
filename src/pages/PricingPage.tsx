@@ -70,3 +70,4 @@ export const PricingPage: React.FC = () => {
     </div>
   );
 };
+
