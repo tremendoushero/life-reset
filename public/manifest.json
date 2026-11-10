@@ -1,0 +1,16 @@
+{
+  "name": "LIFE RESET",
+  "short_name": "LifeReset",
+  "description": "Your life, organised. Your way. ADHD-friendly personal life management.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#F5F0E8",
+  "theme_color": "#E78B3D",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml"
+    }
+  ]
+}

@@ -1,0 +1,142 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Default Theme: Warm Ivory & Dark Espresso */
+  --bg-main: #F5F0E8;
+  --text-main: #30251F;
+  --text-muted: #7B6F63;
+  --card-bg: #FFFEFC;
+  --card-border: #E8E2D8;
+  --accent-orange: #E78B3D;
+  --accent-orange-hover: #D47B30;
+  --accent-orange-light: #FBEFE5;
+
+  --color-sage: #A4B58A;
+  --color-sage-light: #F0F4EC;
+  --color-lavender: #B6A4E8;
+  --color-lavender-light: #F3F0FC;
+  --color-softblue: #A8CDE0;
+  --color-softblue-light: #EDF6FA;
+  --color-softpeach: #F4C7A8;
+  --color-softpeach-light: #FDF3EC;
+  --color-softpink: #E9A9B5;
+  --color-softpink-light: #FBF0F2;
+
+  --radius-card: 1.25rem;
+  --radius-button: 0.875rem;
+
+  --font-base: 1rem;
+}
+
+/* Theme variations */
+body[data-theme='sage'] {
+  --bg-main: #F0F4EC;
+  --card-bg: #FCFEFB;
+  --accent-orange: #6C8452;
+  --accent-orange-hover: #586D42;
+  --accent-orange-light: #E4ECD9;
+}
+
+body[data-theme='lavender'] {
+  --bg-main: #F4F1FA;
+  --card-bg: #FCFBFE;
+  --accent-orange: #8C72D6;
+  --accent-orange-hover: #755BBF;
+  --accent-orange-light: #EBE5F7;
+}
+
+body[data-theme='soft-blue'] {
+  --bg-main: #EFF5F8;
+  --card-bg: #FBFCFE;
+  --accent-orange: #4D8AA7;
+  --accent-orange-hover: #3D738C;
+  --accent-orange-light: #E0EEF5;
+}
+
+body[data-theme='soft-peach'] {
+  --bg-main: #F9F3EE;
+  --card-bg: #FFFEFD;
+  --accent-orange: #D97E43;
+  --accent-orange-hover: #C26C34;
+  --accent-orange-light: #FBECE2;
+}
+
+body[data-theme='dark-espresso'],
+.dark {
+  --bg-main: #231B16;
+  --text-main: #F5EFEB;
+  --text-muted: #B3A499;
+  --card-bg: #2D231E;
+  --card-border: #44372F;
+  --accent-orange: #EB9952;
+  --accent-orange-hover: #F2A96B;
+  --accent-orange-light: #3D2D24;
+
+  --color-sage: #B4C49D;
+  --color-sage-light: #353F2E;
+  --color-lavender: #C4B5EF;
+  --color-lavender-light: #37304F;
+  --color-softblue: #B7D9E9;
+  --color-softblue-light: #2A3C47;
+  --color-softpeach: #F6D4BD;
+  --color-softpeach-light: #4A3528;
+  --color-softpink: #EEBCC5;
+  --color-softpink-light: #472931;
+}
+
+/* Font size modes */
+body[data-font-size='large'] {
+  font-size: 1.125rem;
+}
+
+body[data-font-size='x-large'] {
+  font-size: 1.25rem;
+}
+
+/* Reduced Motion */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+body.reduced-motion * {
+  animation: none !important;
+  transition: none !important;
+}
+
+/* Base resets & typography */
+body {
+  background-color: var(--bg-main);
+  color: var(--text-main);
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  line-height: 1.6;
+}
+
+h1, h2, h3, .font-serif {
+  font-family: 'Playfair Display', Georgia, serif;
+}
+
+/* Custom scrollbars that don't distract */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--card-border);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
