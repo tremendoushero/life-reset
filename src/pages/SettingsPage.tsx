@@ -1,20 +1,33 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { useData } from '@/contexts/DataContext';
 import { Card } from '@/components/common/Card';
 import { Button } from '@/components/common/Button';
 import { Modal } from '@/components/common/Modal';
-import { Settings, Palette, Eye, Moon, BellOff, Download, Trash2, Check, Shield } from 'lucide-react';
+import {
+  Settings,
+  Palette,
+  Eye,
+  Download,
+  Upload,
+  RotateCcw,
+  Check,
+  ShieldCheck,
+  AlertTriangle,
+  HardDrive,
+} from 'lucide-react';
 
 export const SettingsPage: React.FC = () => {
   const { theme, setTheme, colorMode, setColorMode, fontSize, setFontSize, reducedMotion, setReducedMotion } = useTheme();
-  const { user, deleteAccount, updateProfile } = useAuth();
-  const { tasks, brainDumps, habits, bills } = useData();
+  const { user, updateProfile } = useAuth();
+  const { exportBackup, importBackup, clearAllData } = useData();
 
   const [displayName, setDisplayName] = useState(user?.display_name || '');
   const [profileSaved, setProfileSaved] = useState(false);
-  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
+  const [importStatus, setImportStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const themeOptions: { id: any; name: string; preview: string }[] = [
     { id: 'warm-ivory', name: 'Warm Ivory (Default)', preview: 'bg-[#F5F0E8] border-[#E8E2D8]' },
@@ -32,27 +45,68 @@ export const SettingsPage: React.FC = () => {
     setTimeout(() => setProfileSaved(false), 2500);
   };
 
-  const handleExportData = () => {
-    const exportBundle = {
-      profile: user,
-      tasks,
-      brainDumps,
-      habits,
-      bills,
-      exportedAt: new Date().toISOString(),
-      app: 'LIFE RESET',
+  const handleExportData = async () => {
+    try {
+      const jsonString = await exportBackup();
+      const blob = new Blob([jsonString], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `life-reset-backup-${new Date().toISOString().split('T')[0]}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Export failed:', err);
+    }
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      try {
+        const content = event.target?.result as string;
+        const result = await importBackup(content);
+        if (result.success) {
+          setImportStatus({
+            type: 'success',
+            message: 'Backup restored successfully! All your planner data has been loaded.',
+          });
+        } else {
+          setImportStatus({
+            type: 'error',
+            message: result.message || 'Failed to parse backup file.',
+          });
+        }
+      } catch (err: any) {
+        setImportStatus({
+          type: 'error',
+          message: err?.message || 'Error processing backup file.',
+        });
+      }
+      setTimeout(() => setImportStatus(null), 5000);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
     };
-    const blob = new Blob([JSON.stringify(exportBundle, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `life-reset-backup-${new Date().toISOString().split('T')[0]}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
+    reader.readAsText(file);
+  };
+
+  const handleClearData = async () => {
+    await clearAllData();
+    setClearConfirmOpen(false);
+    setDisplayName('My Life Reset');
+    setImportStatus({
+      type: 'success',
+      message: 'Planner reset to clean defaults. All previous records have been cleared.',
+    });
+    setTimeout(() => setImportStatus(null), 4000);
   };
 
   return (
-    <div className="space-y-6 max-w-4xl mx-auto animate-fade-in">
+    <div className="space-y-6 max-w-4xl mx-auto animate-fade-in pb-12">
       {/* Header */}
       <div>
         <div className="flex items-center gap-2">
@@ -62,14 +116,45 @@ export const SettingsPage: React.FC = () => {
           </h2>
         </div>
         <p className="text-xs sm:text-sm text-espresso-500 dark:text-ivory-400 mt-0.5">
-          Customise themes, visual comfort, and quiet hours to fit your sensory preferences.
+          Customise themes, visual comfort, sensory preferences, and manage your local data backups.
         </p>
       </div>
+
+      {/* Local Storage Privacy Badge */}
+      <div className="flex items-center gap-3 p-4 rounded-2xl bg-sage-light/60 dark:bg-espresso-800/80 border border-sage/40 text-espresso-800 dark:text-ivory-100">
+        <ShieldCheck className="w-5 h-5 text-sage-dark shrink-0" />
+        <div className="text-xs">
+          <p className="font-semibold text-sage-dark dark:text-sage">
+            100% Private & Device-First Storage
+          </p>
+          <p className="text-espresso-600 dark:text-ivory-300 mt-0.5">
+            Your LIFE RESET planner saves directly inside your browser's IndexedDB. No external servers track your thoughts, tasks, or habits. Use the Export Backup feature below to keep safe copies of your data.
+          </p>
+        </div>
+      </div>
+
+      {/* Status banner */}
+      {importStatus && (
+        <div
+          className={`p-4 rounded-xl text-xs flex items-center gap-2 ${
+            importStatus.type === 'success'
+              ? 'bg-sage-light text-sage-dark border border-sage/40'
+              : 'bg-red-50 text-red-700 border border-red-200'
+          }`}
+        >
+          {importStatus.type === 'success' ? (
+            <Check className="w-4 h-4 shrink-0" />
+          ) : (
+            <AlertTriangle className="w-4 h-4 shrink-0" />
+          )}
+          <span>{importStatus.message}</span>
+        </div>
+      )}
 
       {/* Profile & Name Card */}
       <Card className="p-5">
         <h3 className="font-serif text-base font-bold text-espresso-900 dark:text-ivory-50 mb-3">
-          Your Profile
+          Your Planner Profile
         </h3>
         <form onSubmit={handleUpdateProfile} className="space-y-3 max-w-md">
           <div>
@@ -80,6 +165,7 @@ export const SettingsPage: React.FC = () => {
               type="text"
               value={displayName}
               onChange={e => setDisplayName(e.target.value)}
+              placeholder="e.g. My Life Reset"
               className="w-full text-xs p-2.5 rounded-xl border border-ivory-300 dark:border-espresso-700 bg-white dark:bg-espresso-900 text-espresso-900 dark:text-ivory-100"
             />
           </div>
@@ -192,7 +278,7 @@ export const SettingsPage: React.FC = () => {
               Reduced Motion
             </span>
             <div className="flex items-center justify-between mt-2">
-              <span className="text-[11px] text-espresso-500">Disable UI animations</span>
+              <span className="text-[11px] text-espresso-500">Disable animations</span>
               <input
                 type="checkbox"
                 checked={reducedMotion}
@@ -204,14 +290,26 @@ export const SettingsPage: React.FC = () => {
         </div>
       </Card>
 
-      {/* 3. Data Export & Account Safety */}
+      {/* 3. Data Backup, Restore & Clear */}
       <Card className="p-5 space-y-4">
-        <h3 className="font-serif text-base font-bold text-espresso-900 dark:text-ivory-50">
-          Data Ownership & Privacy
-        </h3>
+        <div className="flex items-center gap-2">
+          <HardDrive className="w-4 h-4 text-primary" />
+          <h3 className="font-serif text-base font-bold text-espresso-900 dark:text-ivory-50">
+            Data Backup & Restore
+          </h3>
+        </div>
         <p className="text-xs text-espresso-500">
-          Your life management data is strictly yours. You can export complete records in JSON format anytime or safely delete your account.
+          Export your complete planner data (tasks, habits, journal, dopamine menu, budget) into a single portable JSON file. You can import this backup anytime or onto another browser/device.
         </p>
+
+        {/* Hidden file input for import */}
+        <input
+          type="file"
+          ref={fileInputRef}
+          accept=".json,application/json"
+          onChange={handleFileChange}
+          className="hidden"
+        />
 
         <div className="flex flex-wrap items-center gap-3 pt-2">
           <Button
@@ -220,48 +318,53 @@ export const SettingsPage: React.FC = () => {
             onClick={handleExportData}
             icon={<Download className="w-4 h-4" />}
           >
-            Export All Data (JSON)
+            Export Backup (JSON)
+          </Button>
+
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => fileInputRef.current?.click()}
+            icon={<Upload className="w-4 h-4" />}
+          >
+            Import Backup (JSON)
           </Button>
 
           <Button
             variant="danger"
             size="sm"
-            onClick={() => setDeleteConfirmOpen(true)}
-            icon={<Trash2 className="w-4 h-4" />}
+            onClick={() => setClearConfirmOpen(true)}
+            icon={<RotateCcw className="w-4 h-4" />}
           >
-            Delete Account & Records
+            Clear All Data
           </Button>
         </div>
       </Card>
 
-      {/* Delete Confirmation Modal */}
+      {/* Clear Confirmation Modal */}
       <Modal
-        isOpen={deleteConfirmOpen}
-        onClose={() => setDeleteConfirmOpen(false)}
-        title="Confirm Account Deletion"
-        description="This will permanently remove your profile, tasks, and reflections."
+        isOpen={clearConfirmOpen}
+        onClose={() => setClearConfirmOpen(false)}
+        title="Confirm Reset / Clear Data"
+        description="This will restore LIFE RESET to a clean fresh slate."
       >
         <p className="text-xs text-espresso-700 dark:text-ivory-200 mb-4 leading-relaxed">
-          Are you completely sure? This action cannot be undone. All your locally cached and server data will be wiped.
+          Are you sure you want to clear your planner? All local tasks, brain dumps, habits, journal entries, and custom records will be removed from your browser. We recommend downloading an Export Backup first.
         </p>
 
         <div className="flex justify-end gap-2">
-          <Button variant="ghost" size="sm" onClick={() => setDeleteConfirmOpen(false)}>
+          <Button variant="ghost" size="sm" onClick={() => setClearConfirmOpen(false)}>
             Cancel
           </Button>
           <Button
             variant="danger"
             size="sm"
-            onClick={async () => {
-              await deleteAccount();
-              setDeleteConfirmOpen(false);
-            }}
+            onClick={handleClearData}
           >
-            Permanently Delete
+            Reset Everything
           </Button>
         </div>
       </Modal>
     </div>
   );
 };
-

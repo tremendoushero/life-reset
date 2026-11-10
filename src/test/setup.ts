@@ -16,6 +16,12 @@ const localStorageMock = (function () {
     clear: function () {
       store = {};
     },
+    key: function (i: number) {
+      return Object.keys(store)[i] || null;
+    },
+    get length() {
+      return Object.keys(store).length;
+    },
   };
 })();
 

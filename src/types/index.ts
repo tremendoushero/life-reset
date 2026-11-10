@@ -14,7 +14,7 @@ export type TaskRecurrence = 'none' | 'daily' | 'weekdays' | 'weekly' | 'monthly
 
 export interface UserProfile {
   id: string;
-  email: string;
+  email?: string;
   display_name: string;
   avatar_url?: string;
   planning_capacity: EnergyLevel;
@@ -341,7 +341,7 @@ export interface Entitlement {
   user_id: string;
   plan_id: string;
   status: 'active' | 'past_due' | 'canceled' | 'revoked' | 'trial';
-  provider: 'test' | 'stripe' | 'lemonsqueezy';
+  provider: 'test' | 'stripe' | 'lemonsqueezy' | 'gumroad' | 'standalone';
   granted_at: string;
   expires_at?: string;
 }

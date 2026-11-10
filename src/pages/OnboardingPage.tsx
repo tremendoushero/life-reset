@@ -27,7 +27,7 @@ export const OnboardingPage: React.FC = () => {
       planning_capacity: currentCapacity,
       preferred_planning_time: preferredTime,
     });
-    navigate('/app');
+    navigate('/');
   };
 
   return (

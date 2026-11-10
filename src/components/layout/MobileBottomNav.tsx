@@ -14,7 +14,7 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
   return (
     <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-cardwhite dark:bg-espresso-900 border-t border-[#EAE3D8] dark:border-espresso-800 px-3 py-1.5 flex items-center justify-around shadow-soft-lg">
       <NavLink
-        to="/app"
+        to="/"
         end
         className={({ isActive }) =>
           `flex flex-col items-center gap-0.5 p-1.5 rounded-lg text-[10px] font-medium transition-colors ${
@@ -27,7 +27,7 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
       </NavLink>
 
       <NavLink
-        to="/app/tasks"
+        to="/tasks"
         className={({ isActive }) =>
           `flex flex-col items-center gap-0.5 p-1.5 rounded-lg text-[10px] font-medium transition-colors ${
             isActive ? 'text-primary font-bold' : 'text-espresso-500 dark:text-ivory-400'
@@ -48,7 +48,7 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
       </button>
 
       <NavLink
-        to="/app/brain-dump"
+        to="/brain-dump"
         className={({ isActive }) =>
           `flex flex-col items-center gap-0.5 p-1.5 rounded-lg text-[10px] font-medium transition-colors ${
             isActive ? 'text-primary font-bold' : 'text-espresso-500 dark:text-ivory-400'
@@ -69,4 +69,3 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
     </nav>
   );
 };
-

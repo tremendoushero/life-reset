@@ -100,7 +100,7 @@ export const TopBar: React.FC<TopBarProps> = ({ onOpenQuickAdd, onOpenRestart })
                           key={t.id}
                           onClick={() => {
                             setSearchOpen(false);
-                            navigate('/app/tasks');
+                            navigate('/tasks');
                           }}
                           className="p-2 rounded-xl hover:bg-ivory-100 dark:hover:bg-espresso-700 cursor-pointer flex items-center justify-between"
                         >
@@ -116,7 +116,7 @@ export const TopBar: React.FC<TopBarProps> = ({ onOpenQuickAdd, onOpenRestart })
                           key={d.id}
                           onClick={() => {
                             setSearchOpen(false);
-                            navigate('/app/brain-dump');
+                            navigate('/brain-dump');
                           }}
                           className="p-2 rounded-xl hover:bg-ivory-100 dark:hover:bg-espresso-700 cursor-pointer flex items-center justify-between"
                         >
@@ -132,7 +132,7 @@ export const TopBar: React.FC<TopBarProps> = ({ onOpenQuickAdd, onOpenRestart })
                           key={a.id}
                           onClick={() => {
                             setSearchOpen(false);
-                            navigate('/app/life-admin');
+                            navigate('/life-admin');
                           }}
                           className="p-2 rounded-xl hover:bg-ivory-100 dark:hover:bg-espresso-700 cursor-pointer flex items-center justify-between"
                         >

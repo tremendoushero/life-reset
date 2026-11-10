@@ -165,7 +165,7 @@ export const DashboardPage: React.FC = () => {
           <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-wider text-espresso-600 dark:text-ivory-300">
             <span>Recently Unloaded Thoughts ({recentDumps.length})</span>
             <button
-              onClick={() => navigate('/app/brain-dump')}
+              onClick={() => navigate('/brain-dump')}
               className="text-primary hover:underline font-medium capitalize"
             >
               Open Full Brain Dump Manager →
@@ -555,7 +555,7 @@ export const DashboardPage: React.FC = () => {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => navigate('/app/focus')}
+            onClick={() => navigate('/focus')}
             icon={<Target className="w-4 h-4" />}
           >
             Timer
@@ -640,7 +640,7 @@ export const DashboardPage: React.FC = () => {
               Today's Schedule & Tasks
             </h3>
             <button
-              onClick={() => navigate('/app/tasks')}
+              onClick={() => navigate('/tasks')}
               className="text-xs text-primary font-medium hover:underline flex items-center gap-1"
             >
               <span>View all ({tasks.length})</span>
