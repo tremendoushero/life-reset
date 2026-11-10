@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import {
   LayoutDashboard,
@@ -17,17 +17,22 @@ import {
   RefreshCw,
   Calendar,
   ShieldCheck,
+  Cloud,
+  CloudOff,
+  UserCheck,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useData } from '@/contexts/DataContext';
+import { AuthModal } from '@/components/features/AuthModal';
 
 interface DesktopSidebarProps {
   onOpenRestart: () => void;
 }
 
 export const DesktopSidebar: React.FC<DesktopSidebarProps> = ({ onOpenRestart }) => {
-  const { user } = useAuth();
-  const { saveState } = useData();
+  const { user, isAuthenticated } = useAuth();
+  const { saveState, syncState } = useData();
+  const [authModalOpen, setAuthModalOpen] = useState(false);
 
   const navSections = [
     {
@@ -123,35 +128,55 @@ export const DesktopSidebar: React.FC<DesktopSidebarProps> = ({ onOpenRestart })
         ))}
       </div>
 
-      {/* Footer Profile & Save state */}
+      {/* Footer Profile & Save / Cloud Sync state */}
       <div className="p-3 border-t border-ivory-200 dark:border-espresso-800 space-y-2">
-        {/* Save state badge */}
+        {/* Sync state badge */}
         <div className="flex items-center justify-between px-2 text-[11px] text-espresso-400 dark:text-ivory-400">
-          <span className="flex items-center gap-1.5" title="All planner data is saved in your browser IndexedDB">
+          <span className="flex items-center gap-1.5" title="Storage and sync status">
             <span
               className={`w-2 h-2 rounded-full ${
-                saveState === 'saved'
+                !isAuthenticated
                   ? 'bg-sage'
-                  : saveState === 'saving'
+                  : syncState.status === 'offline'
+                  ? 'bg-amber-400'
+                  : syncState.status === 'syncing'
                   ? 'bg-primary animate-pulse'
-                  : 'bg-amber-400'
+                  : 'bg-sage'
               }`}
             />
-            {saveState === 'saved'
+            {!isAuthenticated
               ? 'Saved on device'
-              : saveState === 'saving'
-              ? 'Saving changes...'
-              : 'Local safe mode'}
+              : syncState.status === 'offline'
+              ? `Offline (${syncState.pendingCount} queued)`
+              : syncState.status === 'syncing'
+              ? 'Syncing changes...'
+              : 'Cloud synced'}
           </span>
           <NavLink to="/settings" className="hover:text-primary p-1" title="Settings & Backup">
             <Settings className="w-3.5 h-3.5" />
           </NavLink>
         </div>
 
+        {/* Guest Cloud Sync Prompt if not authenticated */}
+        {!isAuthenticated && (
+          <button
+            onClick={() => setAuthModalOpen(true)}
+            className="w-full flex items-center justify-between p-2 rounded-xl bg-primary/10 border border-primary/30 text-primary hover:bg-primary/20 transition-all text-left"
+          >
+            <div className="flex items-center gap-2">
+              <Cloud className="w-4 h-4 text-primary shrink-0" />
+              <div>
+                <p className="text-xs font-semibold leading-tight">Enable Cloud Sync</p>
+                <p className="text-[10px] opacity-80">Sync devices + offline backup</p>
+              </div>
+            </div>
+          </button>
+        )}
+
         {/* User Card */}
-        <NavLink
-          to="/settings"
-          className="flex items-center justify-between p-2 rounded-xl bg-ivory-100 dark:bg-espresso-800 hover:bg-ivory-200/70 transition-colors"
+        <div
+          onClick={() => setAuthModalOpen(true)}
+          className="flex items-center justify-between p-2 rounded-xl bg-ivory-100 dark:bg-espresso-800 hover:bg-ivory-200/70 cursor-pointer transition-colors"
         >
           <div className="flex items-center gap-2 min-w-0">
             <div className="w-7 h-7 rounded-full bg-primary/20 text-primary flex items-center justify-center font-bold text-xs shrink-0">
@@ -162,12 +187,29 @@ export const DesktopSidebar: React.FC<DesktopSidebarProps> = ({ onOpenRestart })
                 {user?.display_name || 'My Life Reset'}
               </p>
               <p className="text-[10px] text-espresso-400 dark:text-ivory-400 truncate flex items-center gap-1">
-                <ShieldCheck className="w-3 h-3 text-sage-dark inline" /> Private Planner
+                {isAuthenticated ? (
+                  <>
+                    <UserCheck className="w-3 h-3 text-sage-dark inline" />
+                    <span>{user.email || 'Cloud Account'}</span>
+                  </>
+                ) : (
+                  <>
+                    <ShieldCheck className="w-3 h-3 text-sage-dark inline" />
+                    <span>Private Planner</span>
+                  </>
+                )}
               </p>
             </div>
           </div>
-        </NavLink>
+        </div>
       </div>
+
+      {/* Auth Modal */}
+      <AuthModal
+        isOpen={authModalOpen}
+        onClose={() => setAuthModalOpen(false)}
+        defaultMode="signup"
+      />
     </aside>
   );
 };

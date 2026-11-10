@@ -5,6 +5,7 @@ import { useData } from '@/contexts/DataContext';
 import { Card } from '@/components/common/Card';
 import { Button } from '@/components/common/Button';
 import { Modal } from '@/components/common/Modal';
+import { AuthModal } from '@/components/features/AuthModal';
 import {
   Settings,
   Palette,
@@ -16,16 +17,24 @@ import {
   ShieldCheck,
   AlertTriangle,
   HardDrive,
+  Cloud,
+  CloudOff,
+  RefreshCw,
+  LogOut,
+  User,
 } from 'lucide-react';
 
 export const SettingsPage: React.FC = () => {
   const { theme, setTheme, colorMode, setColorMode, fontSize, setFontSize, reducedMotion, setReducedMotion } = useTheme();
-  const { user, updateProfile } = useAuth();
-  const { exportBackup, importBackup, clearAllData } = useData();
+  const { user, updateProfile, isAuthenticated, signOut } = useAuth();
+  const { exportBackup, importBackup, clearAllData, syncState, triggerSync } = useData();
 
   const [displayName, setDisplayName] = useState(user?.display_name || '');
   const [profileSaved, setProfileSaved] = useState(false);
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
+  const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signup');
+  const [isSyncingManual, setIsSyncingManual] = useState(false);
   const [importStatus, setImportStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -43,6 +52,12 @@ export const SettingsPage: React.FC = () => {
     await updateProfile({ display_name: displayName });
     setProfileSaved(true);
     setTimeout(() => setProfileSaved(false), 2500);
+  };
+
+  const handleManualSync = async () => {
+    setIsSyncingManual(true);
+    await triggerSync();
+    setTimeout(() => setIsSyncingManual(false), 800);
   };
 
   const handleExportData = async () => {
@@ -116,19 +131,141 @@ export const SettingsPage: React.FC = () => {
           </h2>
         </div>
         <p className="text-xs sm:text-sm text-espresso-500 dark:text-ivory-400 mt-0.5">
-          Customise themes, visual comfort, sensory preferences, and manage your local data backups.
+          Customise themes, visual comfort, sensory preferences, account sync, and local data backups.
         </p>
       </div>
+
+      {/* CLOUD SYNC & ACCOUNT CARD */}
+      <Card className="p-5 space-y-4 border-primary/30 shadow-soft-sm">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Cloud className="w-5 h-5 text-primary" />
+            <h3 className="font-serif text-base font-bold text-espresso-900 dark:text-ivory-50">
+              Account & Cloud Synchronization
+            </h3>
+          </div>
+          <span
+            className={`text-xs px-2.5 py-1 rounded-full font-semibold flex items-center gap-1.5 ${
+              !isAuthenticated
+                ? 'bg-ivory-200 text-espresso-700 dark:bg-espresso-800 dark:text-ivory-200'
+                : syncState.status === 'offline'
+                ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300'
+                : 'bg-sage-light text-sage-dark dark:bg-sage-dark/30 dark:text-sage'
+            }`}
+          >
+            <span
+              className={`w-2 h-2 rounded-full ${
+                !isAuthenticated
+                  ? 'bg-espresso-400'
+                  : syncState.status === 'offline'
+                  ? 'bg-amber-500'
+                  : 'bg-sage'
+              }`}
+            />
+            {!isAuthenticated
+              ? 'Local Guest Mode'
+              : syncState.status === 'offline'
+              ? 'Offline (Queued)'
+              : 'Synced'}
+          </span>
+        </div>
+
+        <p className="text-xs text-espresso-600 dark:text-ivory-300 leading-relaxed">
+          {!isAuthenticated
+            ? 'Your planner is saving locally in your browser. Create a free account or sign in to sync your tasks, habits, and reflections seamlessly across your laptop, tablet, and phone. Full offline support is included — you can keep planning offline and your changes will sync automatically when you reconnect.'
+            : 'Your planner is connected to your cloud account. Any edits you make while offline will automatically queue on this device and sync immediately whenever internet connectivity returns.'}
+        </p>
+
+        {/* Sync Info Badges */}
+        {isAuthenticated && (
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-3.5 rounded-xl bg-ivory-100 dark:bg-espresso-800 text-xs">
+            <div>
+              <span className="text-[11px] text-espresso-400 block">Signed In As</span>
+              <span className="font-medium text-espresso-900 dark:text-ivory-100 truncate block">
+                {user.email || user.display_name}
+              </span>
+            </div>
+            <div>
+              <span className="text-[11px] text-espresso-400 block">Offline Queue</span>
+              <span className="font-medium text-espresso-900 dark:text-ivory-100">
+                {syncState.pendingCount === 0
+                  ? 'All changes synced'
+                  : `${syncState.pendingCount} changes waiting to sync`}
+              </span>
+            </div>
+            <div>
+              <span className="text-[11px] text-espresso-400 block">Last Synced</span>
+              <span className="font-medium text-espresso-900 dark:text-ivory-100">
+                {syncState.lastSyncedAt
+                  ? new Date(syncState.lastSyncedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                  : 'Just now'}
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* Action Buttons */}
+        <div className="flex flex-wrap items-center gap-3 pt-1">
+          {!isAuthenticated ? (
+            <>
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => {
+                  setAuthMode('signup');
+                  setAuthModalOpen(true);
+                }}
+                icon={<Cloud className="w-4 h-4" />}
+              >
+                Create Account & Enable Cloud Sync
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setAuthMode('signin');
+                  setAuthModalOpen(true);
+                }}
+                icon={<User className="w-4 h-4" />}
+              >
+                Sign In
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={isSyncingManual}
+                onClick={handleManualSync}
+                icon={<RefreshCw className={`w-4 h-4 ${isSyncingManual ? 'animate-spin' : ''}`} />}
+              >
+                {isSyncingManual ? 'Syncing...' : 'Sync Now'}
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={async () => {
+                  await signOut();
+                }}
+                icon={<LogOut className="w-4 h-4" />}
+              >
+                Sign Out on This Device
+              </Button>
+            </>
+          )}
+        </div>
+      </Card>
 
       {/* Local Storage Privacy Badge */}
       <div className="flex items-center gap-3 p-4 rounded-2xl bg-sage-light/60 dark:bg-espresso-800/80 border border-sage/40 text-espresso-800 dark:text-ivory-100">
         <ShieldCheck className="w-5 h-5 text-sage-dark shrink-0" />
         <div className="text-xs">
           <p className="font-semibold text-sage-dark dark:text-sage">
-            100% Private & Device-First Storage
+            Device-First IndexedDB Storage
           </p>
           <p className="text-espresso-600 dark:text-ivory-300 mt-0.5">
-            Your LIFE RESET planner saves directly inside your browser's IndexedDB. No external servers track your thoughts, tasks, or habits. Use the Export Backup feature below to keep safe copies of your data.
+            Your LIFE RESET planner always operates instantly with zero latency using local IndexedDB in your browser. Whether you are online or completely offline, your planner is fully accessible.
           </p>
         </div>
       </div>
@@ -295,11 +432,11 @@ export const SettingsPage: React.FC = () => {
         <div className="flex items-center gap-2">
           <HardDrive className="w-4 h-4 text-primary" />
           <h3 className="font-serif text-base font-bold text-espresso-900 dark:text-ivory-50">
-            Data Backup & Restore
+            Local Data Backup & Restore
           </h3>
         </div>
         <p className="text-xs text-espresso-500">
-          Export your complete planner data (tasks, habits, journal, dopamine menu, budget) into a single portable JSON file. You can import this backup anytime or onto another browser/device.
+          Export your complete planner data into a single portable JSON file anytime. You can restore this file on any browser or device.
         </p>
 
         {/* Hidden file input for import */}
@@ -365,6 +502,13 @@ export const SettingsPage: React.FC = () => {
           </Button>
         </div>
       </Modal>
+
+      {/* Auth Modal */}
+      <AuthModal
+        isOpen={authModalOpen}
+        onClose={() => setAuthModalOpen(false)}
+        defaultMode={authMode}
+      />
     </div>
   );
 };

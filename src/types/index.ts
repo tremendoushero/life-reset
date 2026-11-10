@@ -346,3 +346,22 @@ export interface Entitlement {
   expires_at?: string;
 }
 
+export type SyncStatus = 'synced' | 'syncing' | 'queued' | 'offline' | 'local_only' | 'error';
+
+export interface QueuedMutation {
+  id: string;
+  table: string;
+  operation: 'UPSERT' | 'DELETE';
+  payload: any;
+  timestamp: string;
+  retry_count: number;
+}
+
+export interface CloudSyncState {
+  status: SyncStatus;
+  lastSyncedAt: string | null;
+  pendingCount: number;
+  errorMessage?: string;
+}
+
+

@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useCapacity } from '@/contexts/CapacityContext';
-import { Search, Plus, Sparkles, RefreshCw, X, ArrowRight } from 'lucide-react';
+import { Search, Plus, RefreshCw, X, ArrowRight, Cloud, CloudOff } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useData } from '@/contexts/DataContext';
+import { AuthModal } from '@/components/features/AuthModal';
 
 interface TopBarProps {
   onOpenQuickAdd: () => void;
@@ -11,13 +12,14 @@ interface TopBarProps {
 }
 
 export const TopBar: React.FC<TopBarProps> = ({ onOpenQuickAdd, onOpenRestart }) => {
-  const { user } = useAuth();
+  const { user, isAuthenticated } = useAuth();
   const { mode } = useCapacity();
-  const { tasks, brainDumps, lifeAdmin } = useData();
+  const { tasks, brainDumps, lifeAdmin, syncState, triggerSync } = useData();
   const navigate = useNavigate();
 
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [authModalOpen, setAuthModalOpen] = useState(false);
 
   // Search results
   const filteredTasks = searchQuery.trim()
@@ -48,6 +50,56 @@ export const TopBar: React.FC<TopBarProps> = ({ onOpenQuickAdd, onOpenRestart })
 
       {/* Right controls */}
       <div className="flex items-center gap-2">
+        {/* Cloud Sync Status / Sign Up Trigger */}
+        <button
+          onClick={() => {
+            if (isAuthenticated) {
+              triggerSync();
+            }
+            setAuthModalOpen(true);
+          }}
+          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-xs font-medium transition-all ${
+            !isAuthenticated
+              ? 'border-primary/40 bg-primary/10 text-primary hover:bg-primary/20'
+              : syncState.status === 'offline'
+              ? 'border-amber-300 bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300'
+              : syncState.status === 'syncing'
+              ? 'border-primary/40 bg-primary/10 text-primary animate-pulse'
+              : 'border-sage/40 bg-sage-light/60 dark:bg-espresso-800 text-sage-dark dark:text-sage hover:bg-sage-light'
+          }`}
+          title={
+            !isAuthenticated
+              ? 'Sign up to enable multi-device sync and automatic offline cloud backup'
+              : syncState.status === 'offline'
+              ? `Working offline (${syncState.pendingCount} changes queued to sync)`
+              : syncState.status === 'syncing'
+              ? 'Syncing changes with cloud...'
+              : 'Connected & synced to your account'
+          }
+        >
+          {!isAuthenticated ? (
+            <>
+              <Cloud className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline text-[11px] font-semibold">Sign Up / Sync</span>
+            </>
+          ) : syncState.status === 'offline' ? (
+            <>
+              <CloudOff className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline text-[11px]">Offline ({syncState.pendingCount})</span>
+            </>
+          ) : syncState.status === 'syncing' ? (
+            <>
+              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+              <span className="hidden sm:inline text-[11px]">Syncing</span>
+            </>
+          ) : (
+            <>
+              <Cloud className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline text-[11px]">Synced</span>
+            </>
+          )}
+        </button>
+
         {/* Search trigger */}
         <div className="relative">
           <button
@@ -169,7 +221,13 @@ export const TopBar: React.FC<TopBarProps> = ({ onOpenQuickAdd, onOpenRestart })
           <span className="hidden sm:inline">Add</span>
         </button>
       </div>
+
+      {/* Auth & Sync Modal */}
+      <AuthModal
+        isOpen={authModalOpen}
+        onClose={() => setAuthModalOpen(false)}
+        defaultMode="signup"
+      />
     </header>
   );
 };
-

@@ -25,6 +25,7 @@ import {
   MonthlyReview,
   UserPreferences,
   UserProfile,
+  CloudSyncState,
 } from '@/types';
 import {
   defaultProfile,
@@ -54,6 +55,7 @@ import {
   defaultMonthlyReviews,
 } from '@/lib/starterData';
 import { db } from '@/lib/indexedDB';
+import { syncEngine, ensureUUID } from '@/lib/syncEngine';
 import { useAuth } from './AuthContext';
 import { format, addDays } from 'date-fns';
 
@@ -92,6 +94,8 @@ export interface BackupDataBundle {
 
 interface DataContextType {
   saveState: SaveState;
+  syncState: CloudSyncState;
+  triggerSync: () => Promise<void>;
 
   // Tasks
   tasks: Task[];
@@ -225,6 +229,13 @@ const DataContext = createContext<DataContextType | undefined>(undefined);
 export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user, updateProfile } = useAuth();
   const [saveState, setSaveState] = useState<SaveState>('saved');
+  const [syncState, setSyncState] = useState<CloudSyncState>(() => syncEngine.getSyncState());
+
+  // Subscribe to syncEngine status
+  useEffect(() => {
+    const unsubscribe = syncEngine.subscribe(setSyncState);
+    return () => unsubscribe();
+  }, []);
 
   // Synchronously initialize from local storage mirror if available, else clean starter data
   const [tasks, setTasks] = useState<Task[]>(() => getInitialLocal('tasks', defaultTasks));
@@ -346,7 +357,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
   }, []);
 
-  // Helper to persist slice changes to IndexedDB
+  // Sync each slice to IndexedDB
   const persistSlice = <T,>(key: string, data: T) => {
     setSaveState('saving');
     db.set(key, data)
@@ -357,7 +368,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
   };
 
-  // Sync each slice on update
   useEffect(() => { persistSlice('tasks', tasks); }, [tasks]);
   useEffect(() => { persistSlice('brain_dumps', brainDumps); }, [brainDumps]);
   useEffect(() => { persistSlice('goals', goals); }, [goals]);
@@ -383,24 +393,64 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => { persistSlice('monthly_reviews', monthlyReviews); }, [monthlyReviews]);
   useEffect(() => { persistSlice('user_preferences', preferences); }, [preferences]);
 
+  // Manual Trigger Sync
+  const triggerSync = async () => {
+    if (!user || user.id === 'local_user') return;
+    await syncEngine.flushQueue(user.id);
+    const remote = await syncEngine.pullRemoteData(user.id);
+    if (remote) {
+      if (remote.tasks) setTasks(remote.tasks);
+      if (remote.brainDumps) setBrainDumps(remote.brainDumps);
+      if (remote.goals) setGoals(remote.goals);
+      if (remote.projects) setProjects(remote.projects);
+      if (remote.habits) setHabits(remote.habits);
+      if (remote.habitLogs) setHabitLogs(remote.habitLogs);
+      if (remote.moods) setMoods(remote.moods);
+      if (remote.energies) setEnergies(remote.energies);
+      if (remote.journals) setJournals(remote.journals);
+      if (remote.gratitudes) setGratitudes(remote.gratitudes);
+      if (remote.dopamine) setDopamineMenu(remote.dopamine);
+      if (remote.focusSessions) setFocusSessions(remote.focusSessions);
+      if (remote.calendarEvents) setCalendarEvents(remote.calendarEvents);
+      if (remote.bills) setBills(remote.bills);
+      if (remote.transactions) setTransactions(remote.transactions);
+      if (remote.savings) setSavings(remote.savings);
+      if (remote.debts) setDebts(remote.debts);
+      if (remote.lifeAdmin) setLifeAdmin(remote.lifeAdmin);
+      if (remote.followUps) setFollowUps(remote.followUps);
+      if (remote.householdTasks) setHouseholdTasks(remote.householdTasks);
+      if (remote.householdInv) setHouseholdInventory(remote.householdInv);
+      if (remote.weeklyReviews) setWeeklyReviews(remote.weeklyReviews);
+      if (remote.monthlyReviews) setMonthlyReviews(remote.monthlyReviews);
+    }
+  };
+
   // ----------------------------------------------------
   // Task Actions
   // ----------------------------------------------------
   const addTask = async (taskData: Omit<Task, 'id' | 'user_id' | 'created_at' | 'postponed_count'>) => {
     const newTask: Task = {
       ...taskData,
-      id: `task_${Date.now()}_${Math.random().toString(36).substring(7)}`,
+      id: ensureUUID(),
       user_id: user?.id || 'local_user',
       postponed_count: 0,
       created_at: new Date().toISOString(),
       subtasks: [],
     };
     setTasks(prev => [newTask, ...prev]);
+    syncEngine.dispatchMutation('tasks', 'UPSERT', newTask, user?.id);
     return newTask;
   };
 
   const updateTask = async (id: string, updates: Partial<Task>) => {
-    setTasks(prev => prev.map(t => (t.id === id ? { ...t, ...updates, updated_at: new Date().toISOString() } : t)));
+    setTasks(prev => {
+      const updatedList = prev.map(t => (t.id === id ? { ...t, ...updates, updated_at: new Date().toISOString() } : t));
+      const target = updatedList.find(t => t.id === id);
+      if (target) {
+        syncEngine.dispatchMutation('tasks', 'UPSERT', target, user?.id);
+      }
+      return updatedList;
+    });
   };
 
   const toggleTaskCompletion = async (id: string) => {
@@ -418,6 +468,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const deleteTask = async (id: string) => {
     setTasks(prev => prev.filter(t => t.id !== id));
+    syncEngine.dispatchMutation('tasks', 'DELETE', { id }, user?.id);
   };
 
   const restoreTask = async (id: string) => {
@@ -436,7 +487,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const addSubtask = async (taskId: string, title: string, estimatedMinutes = 5) => {
     const newSubtask = {
-      id: `sub_${Date.now()}_${Math.random().toString(36).substring(7)}`,
+      id: ensureUUID(),
       task_id: taskId,
       user_id: user?.id || 'local_user',
       title,
@@ -446,18 +497,25 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       created_at: new Date().toISOString(),
     };
 
-    setTasks(prev =>
-      prev.map(t =>
+    setTasks(prev => {
+      const updated = prev.map(t =>
         t.id === taskId
           ? { ...t, subtasks: [...(t.subtasks || []), newSubtask] }
           : t
-      )
-    );
+      );
+      const target = updated.find(t => t.id === taskId);
+      if (target) {
+        syncEngine.dispatchMutation('tasks', 'UPSERT', target, user?.id);
+      }
+      return updated;
+    });
+
+    syncEngine.dispatchMutation('task_subtasks', 'UPSERT', newSubtask, user?.id);
   };
 
   const toggleSubtask = async (taskId: string, subtaskId: string) => {
-    setTasks(prev =>
-      prev.map(t =>
+    setTasks(prev => {
+      const updated = prev.map(t =>
         t.id === taskId
           ? {
               ...t,
@@ -466,21 +524,37 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
               ),
             }
           : t
-      )
-    );
+      );
+      const target = updated.find(t => t.id === taskId);
+      if (target) {
+        syncEngine.dispatchMutation('tasks', 'UPSERT', target, user?.id);
+        const sub = target.subtasks?.find(s => s.id === subtaskId);
+        if (sub) {
+          syncEngine.dispatchMutation('task_subtasks', 'UPSERT', sub, user?.id);
+        }
+      }
+      return updated;
+    });
   };
 
   const deleteSubtask = async (taskId: string, subtaskId: string) => {
-    setTasks(prev =>
-      prev.map(t =>
+    setTasks(prev => {
+      const updated = prev.map(t =>
         t.id === taskId
           ? {
               ...t,
               subtasks: (t.subtasks || []).filter(s => s.id !== subtaskId),
             }
           : t
-      )
-    );
+      );
+      const target = updated.find(t => t.id === taskId);
+      if (target) {
+        syncEngine.dispatchMutation('tasks', 'UPSERT', target, user?.id);
+      }
+      return updated;
+    });
+
+    syncEngine.dispatchMutation('task_subtasks', 'DELETE', { id: subtaskId }, user?.id);
   };
 
   const breakdownTaskIntoSteps = async (
@@ -488,7 +562,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     steps: { title: string; estimated_minutes: number }[]
   ) => {
     const newSubtasks = steps.map((s, idx) => ({
-      id: `sub_${Date.now()}_${idx}`,
+      id: ensureUUID(),
       task_id: taskId,
       user_id: user?.id || 'local_user',
       title: s.title,
@@ -498,22 +572,33 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       created_at: new Date().toISOString(),
     }));
 
-    setTasks(prev =>
-      prev.map(t =>
+    setTasks(prev => {
+      const updated = prev.map(t =>
         t.id === taskId
           ? { ...t, subtasks: [...(t.subtasks || []), ...newSubtasks] }
           : t
-      )
-    );
+      );
+      const target = updated.find(t => t.id === taskId);
+      if (target) {
+        syncEngine.dispatchMutation('tasks', 'UPSERT', target, user?.id);
+      }
+      return updated;
+    });
+
+    for (const sub of newSubtasks) {
+      syncEngine.dispatchMutation('task_subtasks', 'UPSERT', sub, user?.id);
+    }
   };
 
   const setTopThreeTaskIds = async (ids: string[]) => {
-    setTasks(prev =>
-      prev.map(t => ({
+    setTasks(prev => {
+      const updated = prev.map(t => ({
         ...t,
         is_top_three: ids.includes(t.id),
-      }))
-    );
+      }));
+      updated.forEach(t => syncEngine.dispatchMutation('tasks', 'UPSERT', t, user?.id));
+      return updated;
+    });
   };
 
   const toggleTopThree = async (id: string): Promise<{ success: boolean; message?: string }> => {
@@ -542,7 +627,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // ----------------------------------------------------
   const addBrainDump = async (content: string, category = 'uncategorized') => {
     const entry: BrainDumpEntry = {
-      id: `bd_${Date.now()}_${Math.random().toString(36).substring(7)}`,
+      id: ensureUUID(),
       user_id: user?.id || 'local_user',
       content,
       category,
@@ -551,6 +636,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       created_at: new Date().toISOString(),
     };
     setBrainDumps(prev => [entry, ...prev]);
+    syncEngine.dispatchMutation('brain_dump_entries', 'UPSERT', entry, user?.id);
     return entry;
   };
 
@@ -570,19 +656,32 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       is_top_three: false,
     });
 
-    setBrainDumps(prev =>
-      prev.map(b => (b.id === id ? { ...b, is_processed: true, converted_task_id: createdTask.id } : b))
-    );
+    setBrainDumps(prev => {
+      const updated = prev.map(b => (b.id === id ? { ...b, is_processed: true, converted_task_id: createdTask.id } : b));
+      const target = updated.find(b => b.id === id);
+      if (target) {
+        syncEngine.dispatchMutation('brain_dump_entries', 'UPSERT', target, user?.id);
+      }
+      return updated;
+    });
 
     return createdTask;
   };
 
   const archiveBrainDump = async (id: string) => {
-    setBrainDumps(prev => prev.map(b => (b.id === id ? { ...b, is_archived: true } : b)));
+    setBrainDumps(prev => {
+      const updated = prev.map(b => (b.id === id ? { ...b, is_archived: true } : b));
+      const target = updated.find(b => b.id === id);
+      if (target) {
+        syncEngine.dispatchMutation('brain_dump_entries', 'UPSERT', target, user?.id);
+      }
+      return updated;
+    });
   };
 
   const deleteBrainDump = async (id: string) => {
     setBrainDumps(prev => prev.filter(b => b.id !== id));
+    syncEngine.dispatchMutation('brain_dump_entries', 'DELETE', { id }, user?.id);
   };
 
   // ----------------------------------------------------
@@ -591,64 +690,92 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const addGoal = async (goal: Omit<Goal, 'id' | 'user_id' | 'created_at'>) => {
     const newGoal: Goal = {
       ...goal,
-      id: `goal_${Date.now()}`,
+      id: ensureUUID(),
       user_id: user?.id || 'local_user',
       created_at: new Date().toISOString(),
       milestones: [],
     };
     setGoals(prev => [newGoal, ...prev]);
+    syncEngine.dispatchMutation('goals', 'UPSERT', newGoal, user?.id);
   };
 
   const updateGoal = async (id: string, updates: Partial<Goal>) => {
-    setGoals(prev => prev.map(g => (g.id === id ? { ...g, ...updates } : g)));
+    setGoals(prev => {
+      const updated = prev.map(g => (g.id === id ? { ...g, ...updates } : g));
+      const target = updated.find(g => g.id === id);
+      if (target) {
+        syncEngine.dispatchMutation('goals', 'UPSERT', target, user?.id);
+      }
+      return updated;
+    });
   };
 
   const deleteGoal = async (id: string) => {
     setGoals(prev => prev.filter(g => g.id !== id));
+    syncEngine.dispatchMutation('goals', 'DELETE', { id }, user?.id);
   };
 
   const addProject = async (project: Omit<Project, 'id' | 'user_id' | 'created_at'>) => {
     const newProj: Project = {
       ...project,
-      id: `proj_${Date.now()}`,
+      id: ensureUUID(),
       user_id: user?.id || 'local_user',
       created_at: new Date().toISOString(),
     };
     setProjects(prev => [newProj, ...prev]);
+    syncEngine.dispatchMutation('projects', 'UPSERT', newProj, user?.id);
   };
 
   const updateProject = async (id: string, updates: Partial<Project>) => {
-    setProjects(prev => prev.map(p => (p.id === id ? { ...p, ...updates } : p)));
+    setProjects(prev => {
+      const updated = prev.map(p => (p.id === id ? { ...p, ...updates } : p));
+      const target = updated.find(p => p.id === id);
+      if (target) {
+        syncEngine.dispatchMutation('projects', 'UPSERT', target, user?.id);
+      }
+      return updated;
+    });
   };
 
   const deleteProject = async (id: string) => {
     setProjects(prev => prev.filter(p => p.id !== id));
+    syncEngine.dispatchMutation('projects', 'DELETE', { id }, user?.id);
   };
 
   // ----------------------------------------------------
-  // Habits & Habit Logs (Gentle, non-punitive)
+  // Habits & Habit Logs
   // ----------------------------------------------------
   const addHabit = async (habit: Omit<Habit, 'id' | 'user_id' | 'created_at'>) => {
     const newHabit: Habit = {
       ...habit,
-      id: `hab_${Date.now()}`,
+      id: ensureUUID(),
       user_id: user?.id || 'local_user',
       created_at: new Date().toISOString(),
     };
     setHabits(prev => [newHabit, ...prev]);
+    syncEngine.dispatchMutation('habits', 'UPSERT', newHabit, user?.id);
   };
 
   const updateHabit = async (id: string, updates: Partial<Habit>) => {
-    setHabits(prev => prev.map(h => (h.id === id ? { ...h, ...updates } : h)));
+    setHabits(prev => {
+      const updated = prev.map(h => (h.id === id ? { ...h, ...updates } : h));
+      const target = updated.find(h => h.id === id);
+      if (target) {
+        syncEngine.dispatchMutation('habits', 'UPSERT', target, user?.id);
+      }
+      return updated;
+    });
   };
 
   const toggleHabitLog = async (habitId: string, date: string) => {
     const existingIndex = habitLogs.findIndex(l => l.habit_id === habitId && l.date === date);
     if (existingIndex >= 0) {
+      const targetId = habitLogs[existingIndex].id;
       setHabitLogs(prev => prev.filter((_, idx) => idx !== existingIndex));
+      syncEngine.dispatchMutation('habit_logs', 'DELETE', { id: targetId }, user?.id);
     } else {
       const newLog: HabitLog = {
-        id: `hl_${Date.now()}`,
+        id: ensureUUID(),
         habit_id: habitId,
         user_id: user?.id || 'local_user',
         date,
@@ -656,12 +783,14 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         created_at: new Date().toISOString(),
       };
       setHabitLogs(prev => [...prev, newLog]);
+      syncEngine.dispatchMutation('habit_logs', 'UPSERT', newLog, user?.id);
     }
   };
 
   const deleteHabit = async (id: string) => {
     setHabits(prev => prev.filter(h => h.id !== id));
     setHabitLogs(prev => prev.filter(l => l.habit_id !== id));
+    syncEngine.dispatchMutation('habits', 'DELETE', { id }, user?.id);
   };
 
   // ----------------------------------------------------
@@ -669,7 +798,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // ----------------------------------------------------
   const addMood = async (mood: MoodEntry['mood'], notes?: string, tags?: string[]) => {
     const entry: MoodEntry = {
-      id: `mood_${Date.now()}`,
+      id: ensureUUID(),
       user_id: user?.id || 'local_user',
       date: format(new Date(), 'yyyy-MM-dd'),
       mood,
@@ -678,6 +807,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       created_at: new Date().toISOString(),
     };
     setMoods(prev => [entry, ...prev]);
+    syncEngine.dispatchMutation('mood_entries', 'UPSERT', entry, user?.id);
   };
 
   const addEnergy = async (
@@ -686,7 +816,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     notes?: string
   ) => {
     const entry: EnergyEntry = {
-      id: `energy_${Date.now()}`,
+      id: ensureUUID(),
       user_id: user?.id || 'local_user',
       date: format(new Date(), 'yyyy-MM-dd'),
       time_of_day: timeOfDay || 'morning',
@@ -695,11 +825,12 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       created_at: new Date().toISOString(),
     };
     setEnergies(prev => [entry, ...prev]);
+    syncEngine.dispatchMutation('energy_entries', 'UPSERT', entry, user?.id);
   };
 
   const addJournal = async (content: string, title?: string, prompt?: string, tags?: string[]) => {
     const entry: JournalEntry = {
-      id: `jnl_${Date.now()}`,
+      id: ensureUUID(),
       user_id: user?.id || 'local_user',
       date: format(new Date(), 'yyyy-MM-dd'),
       title: title || 'Quick Reflection',
@@ -709,30 +840,40 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       created_at: new Date().toISOString(),
     };
     setJournals(prev => [entry, ...prev]);
+    syncEngine.dispatchMutation('journal_entries', 'UPSERT', entry, user?.id);
   };
 
   const addGratitude = async (text: string) => {
     const entry: GratitudeEntry = {
-      id: `grat_${Date.now()}`,
+      id: ensureUUID(),
       user_id: user?.id || 'local_user',
       text,
       date: format(new Date(), 'yyyy-MM-dd'),
       created_at: new Date().toISOString(),
     };
     setGratitudes(prev => [entry, ...prev]);
+    syncEngine.dispatchMutation('gratitude_entries', 'UPSERT', entry, user?.id);
   };
 
   const addDopamineActivity = async (activity: Omit<DopamineActivity, 'id' | 'user_id'>) => {
     const item: DopamineActivity = {
       ...activity,
-      id: `dop_${Date.now()}`,
+      id: ensureUUID(),
       user_id: user?.id || 'local_user',
     };
     setDopamineMenu(prev => [item, ...prev]);
+    syncEngine.dispatchMutation('dopamine_activities', 'UPSERT', item, user?.id);
   };
 
   const toggleDopamineFavorite = async (id: string) => {
-    setDopamineMenu(prev => prev.map(d => (d.id === id ? { ...d, is_favorite: !d.is_favorite } : d)));
+    setDopamineMenu(prev => {
+      const updated = prev.map(d => (d.id === id ? { ...d, is_favorite: !d.is_favorite } : d));
+      const target = updated.find(d => d.id === id);
+      if (target) {
+        syncEngine.dispatchMutation('dopamine_activities', 'UPSERT', target, user?.id);
+      }
+      return updated;
+    });
   };
 
   // ----------------------------------------------------
@@ -741,11 +882,12 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const recordFocusSession = async (session: Omit<FocusSession, 'id' | 'user_id' | 'created_at'>) => {
     const entry: FocusSession = {
       ...session,
-      id: `foc_${Date.now()}`,
+      id: ensureUUID(),
       user_id: user?.id || 'local_user',
       created_at: new Date().toISOString(),
     };
     setFocusSessions(prev => [entry, ...prev]);
+    syncEngine.dispatchMutation('focus_sessions', 'UPSERT', entry, user?.id);
   };
 
   // ----------------------------------------------------
@@ -754,63 +896,97 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const addCalendarEvent = async (event: Omit<CalendarEvent, 'id' | 'user_id'>) => {
     const newEvent: CalendarEvent = {
       ...event,
-      id: `evt_${Date.now()}`,
+      id: ensureUUID(),
       user_id: user?.id || 'local_user',
     };
     setCalendarEvents(prev => [...prev, newEvent]);
+    syncEngine.dispatchMutation('calendar_events', 'UPSERT', newEvent, user?.id);
   };
 
   const updateCalendarEvent = async (id: string, updates: Partial<CalendarEvent>) => {
-    setCalendarEvents(prev => prev.map(e => (e.id === id ? { ...e, ...updates } : e)));
+    setCalendarEvents(prev => {
+      const updated = prev.map(e => (e.id === id ? { ...e, ...updates } : e));
+      const target = updated.find(e => e.id === id);
+      if (target) {
+        syncEngine.dispatchMutation('calendar_events', 'UPSERT', target, user?.id);
+      }
+      return updated;
+    });
   };
 
   const deleteCalendarEvent = async (id: string) => {
     setCalendarEvents(prev => prev.filter(e => e.id !== id));
+    syncEngine.dispatchMutation('calendar_events', 'DELETE', { id }, user?.id);
   };
 
   // ----------------------------------------------------
   // Money
   // ----------------------------------------------------
   const addBill = async (bill: Omit<Bill, 'id' | 'user_id'>) => {
-    const newBill: Bill = { ...bill, id: `bill_${Date.now()}`, user_id: user?.id || 'local_user' };
+    const newBill: Bill = { ...bill, id: ensureUUID(), user_id: user?.id || 'local_user' };
     setBills(prev => [newBill, ...prev]);
+    syncEngine.dispatchMutation('bills', 'UPSERT', newBill, user?.id);
   };
 
   const toggleBillPaid = async (id: string) => {
-    setBills(prev =>
-      prev.map(b => (b.id === id ? { ...b, payment_status: b.payment_status === 'paid' ? 'pending' : 'paid', paid_date: new Date().toISOString() } : b))
-    );
+    setBills(prev => {
+      const updated = prev.map(b => (b.id === id ? { ...b, payment_status: (b.payment_status === 'paid' ? 'pending' : 'paid') as Bill['payment_status'], paid_date: new Date().toISOString() } : b));
+      const target = updated.find(b => b.id === id);
+      if (target) {
+        syncEngine.dispatchMutation('bills', 'UPSERT', target, user?.id);
+      }
+      return updated;
+    });
   };
 
   const deleteBill = async (id: string) => {
     setBills(prev => prev.filter(b => b.id !== id));
+    syncEngine.dispatchMutation('bills', 'DELETE', { id }, user?.id);
   };
 
   const addTransaction = async (tx: Omit<Transaction, 'id' | 'user_id'>) => {
-    const newTx: Transaction = { ...tx, id: `tx_${Date.now()}`, user_id: user?.id || 'local_user' };
+    const newTx: Transaction = { ...tx, id: ensureUUID(), user_id: user?.id || 'local_user' };
     setTransactions(prev => [newTx, ...prev]);
+    syncEngine.dispatchMutation('transactions', 'UPSERT', newTx, user?.id);
   };
 
   const deleteTransaction = async (id: string) => {
     setTransactions(prev => prev.filter(t => t.id !== id));
+    syncEngine.dispatchMutation('transactions', 'DELETE', { id }, user?.id);
   };
 
   const addSavings = async (s: Omit<SavingsGoal, 'id' | 'user_id'>) => {
-    const newS: SavingsGoal = { ...s, id: `sav_${Date.now()}`, user_id: user?.id || 'local_user' };
+    const newS: SavingsGoal = { ...s, id: ensureUUID(), user_id: user?.id || 'local_user' };
     setSavings(prev => [newS, ...prev]);
+    syncEngine.dispatchMutation('savings_goals', 'UPSERT', newS, user?.id);
   };
 
   const updateSavingsAmount = async (id: string, amount: number) => {
-    setSavings(prev => prev.map(s => (s.id === id ? { ...s, current_amount: amount } : s)));
+    setSavings(prev => {
+      const updated = prev.map(s => (s.id === id ? { ...s, current_amount: amount } : s));
+      const target = updated.find(s => s.id === id);
+      if (target) {
+        syncEngine.dispatchMutation('savings_goals', 'UPSERT', target, user?.id);
+      }
+      return updated;
+    });
   };
 
   const addDebt = async (d: Omit<Debt, 'id' | 'user_id'>) => {
-    const newDebt: Debt = { ...d, id: `debt_${Date.now()}`, user_id: user?.id || 'local_user' };
+    const newDebt: Debt = { ...d, id: ensureUUID(), user_id: user?.id || 'local_user' };
     setDebts(prev => [newDebt, ...prev]);
+    syncEngine.dispatchMutation('debts', 'UPSERT', newDebt, user?.id);
   };
 
   const updateDebtBalance = async (id: string, newBalance: number) => {
-    setDebts(prev => prev.map(d => (d.id === id ? { ...d, current_balance: newBalance } : d)));
+    setDebts(prev => {
+      const updated = prev.map(d => (d.id === id ? { ...d, current_balance: newBalance } : d));
+      const target = updated.find(d => d.id === id);
+      if (target) {
+        syncEngine.dispatchMutation('debts', 'UPSERT', target, user?.id);
+      }
+      return updated;
+    });
   };
 
   // ----------------------------------------------------
@@ -819,57 +995,87 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const addLifeAdmin = async (item: Omit<LifeAdminItem, 'id' | 'user_id' | 'created_at'>) => {
     const newItem: LifeAdminItem = {
       ...item,
-      id: `admin_${Date.now()}`,
+      id: ensureUUID(),
       user_id: user?.id || 'local_user',
       created_at: new Date().toISOString(),
     };
     setLifeAdmin(prev => [newItem, ...prev]);
+    syncEngine.dispatchMutation('life_admin_items', 'UPSERT', newItem, user?.id);
   };
 
   const updateLifeAdminStatus = async (id: string, status: LifeAdminItem['status']) => {
-    setLifeAdmin(prev => prev.map(a => (a.id === id ? { ...a, status } : a)));
+    setLifeAdmin(prev => {
+      const updated = prev.map(a => (a.id === id ? { ...a, status } : a));
+      const target = updated.find(a => a.id === id);
+      if (target) {
+        syncEngine.dispatchMutation('life_admin_items', 'UPSERT', target, user?.id);
+      }
+      return updated;
+    });
   };
 
   const deleteLifeAdmin = async (id: string) => {
     setLifeAdmin(prev => prev.filter(a => a.id !== id));
+    syncEngine.dispatchMutation('life_admin_items', 'DELETE', { id }, user?.id);
   };
 
   const addFollowUp = async (item: Omit<FollowUpItem, 'id' | 'user_id'>) => {
-    const newFu: FollowUpItem = { ...item, id: `fu_${Date.now()}`, user_id: user?.id || 'local_user' };
+    const newFu: FollowUpItem = { ...item, id: ensureUUID(), user_id: user?.id || 'local_user' };
     setFollowUps(prev => [newFu, ...prev]);
+    syncEngine.dispatchMutation('follow_ups', 'UPSERT', newFu, user?.id);
   };
 
   const updateFollowUpStatus = async (id: string, status: FollowUpItem['status']) => {
-    setFollowUps(prev => prev.map(f => (f.id === id ? { ...f, status } : f)));
+    setFollowUps(prev => {
+      const updated = prev.map(f => (f.id === id ? { ...f, status } : f));
+      const target = updated.find(f => f.id === id);
+      if (target) {
+        syncEngine.dispatchMutation('follow_ups', 'UPSERT', target, user?.id);
+      }
+      return updated;
+    });
   };
 
   const deleteFollowUp = async (id: string) => {
     setFollowUps(prev => prev.filter(f => f.id !== id));
+    syncEngine.dispatchMutation('follow_ups', 'DELETE', { id }, user?.id);
   };
 
   // ----------------------------------------------------
   // Household
   // ----------------------------------------------------
   const addHouseholdTask = async (task: Omit<HouseholdTask, 'id' | 'user_id'>) => {
-    const newTask: HouseholdTask = { ...task, id: `hh_${Date.now()}`, user_id: user?.id || 'local_user' };
+    const newTask: HouseholdTask = { ...task, id: ensureUUID(), user_id: user?.id || 'local_user' };
     setHouseholdTasks(prev => [...prev, newTask]);
+    syncEngine.dispatchMutation('household_tasks', 'UPSERT', newTask, user?.id);
   };
 
   const toggleHouseholdTask = async (id: string) => {
-    setHouseholdTasks(prev =>
-      prev.map(h => (h.id === id ? { ...h, is_completed: !h.is_completed, last_completed: format(new Date(), 'yyyy-MM-dd') } : h))
-    );
+    setHouseholdTasks(prev => {
+      const updated = prev.map(h => (h.id === id ? { ...h, is_completed: !h.is_completed, last_completed: format(new Date(), 'yyyy-MM-dd') } : h));
+      const target = updated.find(h => h.id === id);
+      if (target) {
+        syncEngine.dispatchMutation('household_tasks', 'UPSERT', target, user?.id);
+      }
+      return updated;
+    });
   };
 
   const addInventoryItem = async (item: Omit<HouseholdInventoryItem, 'id' | 'user_id'>) => {
-    const newInv: HouseholdInventoryItem = { ...item, id: `inv_${Date.now()}`, user_id: user?.id || 'local_user' };
+    const newInv: HouseholdInventoryItem = { ...item, id: ensureUUID(), user_id: user?.id || 'local_user' };
     setHouseholdInventory(prev => [...prev, newInv]);
+    syncEngine.dispatchMutation('household_inventory', 'UPSERT', newInv, user?.id);
   };
 
   const updateInventoryQuantity = async (id: string, delta: number) => {
-    setHouseholdInventory(prev =>
-      prev.map(i => (i.id === id ? { ...i, quantity: Math.max(0, i.quantity + delta) } : i))
-    );
+    setHouseholdInventory(prev => {
+      const updated = prev.map(i => (i.id === id ? { ...i, quantity: Math.max(0, i.quantity + delta) } : i));
+      const target = updated.find(i => i.id === id);
+      if (target) {
+        syncEngine.dispatchMutation('household_inventory', 'UPSERT', target, user?.id);
+      }
+      return updated;
+    });
   };
 
   // ----------------------------------------------------
@@ -878,46 +1084,50 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const addWeeklyReview = async (review: Omit<WeeklyReview, 'id' | 'user_id' | 'created_at'>) => {
     const newRev: WeeklyReview = {
       ...review,
-      id: `wrev_${Date.now()}`,
+      id: ensureUUID(),
       user_id: user?.id || 'local_user',
       created_at: new Date().toISOString(),
     };
     setWeeklyReviews(prev => [newRev, ...prev]);
+    syncEngine.dispatchMutation('weekly_reviews', 'UPSERT', newRev, user?.id);
   };
 
   const addMonthlyReview = async (review: Omit<MonthlyReview, 'id' | 'user_id' | 'created_at'>) => {
     const newRev: MonthlyReview = {
       ...review,
-      id: `mrev_${Date.now()}`,
+      id: ensureUUID(),
       user_id: user?.id || 'local_user',
       created_at: new Date().toISOString(),
     };
     setMonthlyReviews(prev => [newRev, ...prev]);
+    syncEngine.dispatchMutation('monthly_reviews', 'UPSERT', newRev, user?.id);
   };
 
   // ----------------------------------------------------
   // Preferences
   // ----------------------------------------------------
   const updatePreferences = async (updates: Partial<UserPreferences>) => {
-    setPreferences(prev => ({ ...prev, ...updates }));
+    setPreferences(prev => {
+      const updated = { ...prev, ...updates };
+      syncEngine.dispatchMutation('user_preferences', 'UPSERT', updated, user?.id);
+      return updated;
+    });
   };
 
   // ----------------------------------------------------
-  // SIGNATURE FEATURE: GENTLE RESTART SYSTEM
-  // Safe, no-guilt reset of the day
-  // Does NOT delete tasks or history. Only cleans overdue flags & focuses today.
+  // Gentle Restart
   // ----------------------------------------------------
   const resetMyDay = async (selectedTaskIdsToKeep: string[]) => {
     const todayStr = format(new Date(), 'yyyy-MM-dd');
 
-    setTasks(prev =>
-      prev.map(t => {
+    setTasks(prev => {
+      const updated = prev.map(t => {
         if (selectedTaskIdsToKeep.includes(t.id)) {
           return {
             ...t,
             due_date: todayStr,
             is_top_three: true,
-            status: t.status === 'completed' ? 'completed' : 'not_started',
+            status: (t.status === 'completed' ? 'completed' : 'not_started') as Task['status'],
           };
         }
 
@@ -926,13 +1136,16 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
             ...t,
             due_date: null,
             is_top_three: false,
-            status: 'inbox',
+            status: 'inbox' as Task['status'],
           };
         }
 
         return t;
-      })
-    );
+      });
+
+      updated.forEach(t => syncEngine.dispatchMutation('tasks', 'UPSERT', t, user?.id));
+      return updated;
+    });
   };
 
   // ----------------------------------------------------
@@ -979,12 +1192,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return { success: false, message: 'Invalid backup file format.' };
       }
 
-      // Restore profile if present
-      if (data.profile) {
-        await updateProfile(data.profile);
-      }
-
-      // Restore collections
+      if (data.profile) await updateProfile(data.profile);
       if (Array.isArray(data.tasks)) setTasks(data.tasks);
       if (Array.isArray(data.brainDumps)) setBrainDumps(data.brainDumps);
       if (Array.isArray(data.goals)) setGoals(data.goals);
@@ -1018,7 +1226,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const clearAllData = async (): Promise<void> => {
-    // Reset state slices to clean defaults
     setTasks(defaultTasks);
     setBrainDumps(defaultBrainDumps);
     setGoals(defaultGoals);
@@ -1044,13 +1251,10 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setMonthlyReviews(defaultMonthlyReviews);
     setPreferences(defaultPreferences);
 
-    // Reset profile
     await updateProfile(defaultProfile);
-
-    // Clear local storage and IndexedDB
     await db.clear();
+    await db.clearQueue();
 
-    // Re-seed essential starter templates
     await Promise.all([
       db.set('profile', defaultProfile),
       db.set('user_preferences', defaultPreferences),
@@ -1086,6 +1290,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     <DataContext.Provider
       value={{
         saveState,
+        syncState,
+        triggerSync,
         tasks,
         addTask,
         updateTask,

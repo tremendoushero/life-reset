@@ -2,6 +2,8 @@
 // LIFE RESET - IndexedDB Storage Engine (Standalone Local Storage)
 // ====================================================================
 
+import { QueuedMutation } from '@/types';
+
 const DB_NAME = 'LifeResetPlannerDB';
 const DB_VERSION = 1;
 const STORE_NAME = 'planner_data';
@@ -161,5 +163,33 @@ export const db = {
         req.onerror = () => reject(req.error);
       });
     } catch {}
+  },
+
+  async getQueue(): Promise<QueuedMutation[]> {
+    return db.get<QueuedMutation[]>('sync_mutation_queue', []);
+  },
+
+  async enqueueMutation(mutation: QueuedMutation): Promise<void> {
+    const queue = await db.getQueue();
+    // Coalesce updates if an upsert for the same table and payload.id exists
+    const existingIdx = queue.findIndex(
+      m => m.table === mutation.table && m.payload?.id && m.payload.id === mutation.payload?.id
+    );
+    if (existingIdx >= 0 && mutation.operation === 'UPSERT' && queue[existingIdx].operation === 'UPSERT') {
+      queue[existingIdx] = mutation;
+    } else {
+      queue.push(mutation);
+    }
+    await db.set('sync_mutation_queue', queue);
+  },
+
+  async dequeueMutation(id: string): Promise<void> {
+    const queue = await db.getQueue();
+    const updated = queue.filter(m => m.id !== id);
+    await db.set('sync_mutation_queue', updated);
+  },
+
+  async clearQueue(): Promise<void> {
+    await db.set('sync_mutation_queue', []);
   },
 };
