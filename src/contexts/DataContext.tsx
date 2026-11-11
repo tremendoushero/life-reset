@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import {
   Task,
   BrainDumpEntry,
@@ -56,6 +56,7 @@ import {
 } from '@/lib/starterData';
 import { db } from '@/lib/indexedDB';
 import { syncEngine, ensureUUID } from '@/lib/syncEngine';
+import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 import { useAuth } from './AuthContext';
 import { format, addDays } from 'date-fns';
 
@@ -95,7 +96,8 @@ export interface BackupDataBundle {
 interface DataContextType {
   saveState: SaveState;
   syncState: CloudSyncState;
-  triggerSync: () => Promise<void>;
+  triggerSync: () => Promise<{ success: boolean; flushedCount: number; pulledCount: number; error?: string }>;
+  dismissSyncError: () => void;
 
   // Tasks
   tasks: Task[];
@@ -231,11 +233,76 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [saveState, setSaveState] = useState<SaveState>('saved');
   const [syncState, setSyncState] = useState<CloudSyncState>(() => syncEngine.getSyncState());
 
-  // Subscribe to syncEngine status
+  // Subscribe to syncEngine status, remote data pulls, and sign-out resets
   useEffect(() => {
-    const unsubscribe = syncEngine.subscribe(setSyncState);
-    return () => unsubscribe();
+    const unsubStatus = syncEngine.subscribe(setSyncState);
+
+    const unsubRemote = syncEngine.onRemoteData((remote) => {
+      if (remote.tasks) setTasks(remote.tasks);
+      if (remote.brainDumps) setBrainDumps(remote.brainDumps);
+      if (remote.goals) setGoals(remote.goals);
+      if (remote.projects) setProjects(remote.projects);
+      if (remote.habits) setHabits(remote.habits);
+      if (remote.habitLogs) setHabitLogs(remote.habitLogs);
+      if (remote.moods) setMoods(remote.moods);
+      if (remote.energies) setEnergies(remote.energies);
+      if (remote.journals) setJournals(remote.journals);
+      if (remote.gratitudes) setGratitudes(remote.gratitudes);
+      if (remote.dopamine) setDopamineMenu(remote.dopamine);
+      if (remote.focusSessions) setFocusSessions(remote.focusSessions);
+      if (remote.calendarEvents) setCalendarEvents(remote.calendarEvents);
+      if (remote.bills) setBills(remote.bills);
+      if (remote.transactions) setTransactions(remote.transactions);
+      if (remote.savings) setSavings(remote.savings);
+      if (remote.debts) setDebts(remote.debts);
+      if (remote.lifeAdmin) setLifeAdmin(remote.lifeAdmin);
+      if (remote.followUps) setFollowUps(remote.followUps);
+      if (remote.householdTasks) setHouseholdTasks(remote.householdTasks);
+      if (remote.householdInv) setHouseholdInventory(remote.householdInv);
+      if (remote.weeklyReviews) setWeeklyReviews(remote.weeklyReviews);
+      if (remote.monthlyReviews) setMonthlyReviews(remote.monthlyReviews);
+    });
+
+    const unsubReset = syncEngine.onReset(() => {
+      setTasks(defaultTasks);
+      setBrainDumps(defaultBrainDumps);
+      setGoals(defaultGoals);
+      setProjects(defaultProjects);
+      setHabits(defaultHabits);
+      setHabitLogs(defaultHabitLogs);
+      setMoods(defaultMoods);
+      setEnergies(defaultEnergies);
+      setJournals(defaultJournals);
+      setGratitudes(defaultGratitudes);
+      setDopamineMenu(defaultDopamineMenu);
+      setFocusSessions(defaultFocusSessions);
+      setCalendarEvents(defaultCalendarEvents);
+      setBills(defaultBills);
+      setTransactions(defaultTransactions);
+      setSavings(defaultSavings);
+      setDebts(defaultDebts);
+      setLifeAdmin(defaultLifeAdmin);
+      setFollowUps(defaultFollowUps);
+      setHouseholdTasks(defaultHouseholdTasks);
+      setHouseholdInventory(defaultHouseholdInventory);
+      setWeeklyReviews(defaultWeeklyReviews);
+      setMonthlyReviews(defaultMonthlyReviews);
+      setPreferences(defaultPreferences);
+    });
+
+    return () => {
+      unsubStatus();
+      unsubRemote();
+      unsubReset();
+    };
   }, []);
+
+  // Update syncEngine current user when auth user changes
+  useEffect(() => {
+    if (user?.id && user.id !== 'local_user') {
+      syncEngine.setUserId(user.id);
+    }
+  }, [user?.id]);
 
   // Synchronously initialize from local storage mirror if available, else clean starter data
   const [tasks, setTasks] = useState<Task[]>(() => getInitialLocal('tasks', defaultTasks));
@@ -264,6 +331,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [preferences, setPreferences] = useState<UserPreferences>(() => getInitialLocal('user_preferences', defaultPreferences));
 
   // Asynchronously hydrate from IndexedDB on startup
+  const isHydratedRef = useRef(false);
+
   useEffect(() => {
     let isMounted = true;
     const hydrateAll = async () => {
@@ -345,6 +414,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
           if (loadedWReviews) setWeeklyReviews(loadedWReviews);
           if (loadedMReviews) setMonthlyReviews(loadedMReviews);
           if (loadedPrefs) setPreferences(loadedPrefs);
+          isHydratedRef.current = true;
         }
       } catch (err) {
         console.error('Failed to hydrate planner state from IndexedDB:', err);
@@ -359,6 +429,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Sync each slice to IndexedDB
   const persistSlice = <T,>(key: string, data: T) => {
+    if (!isHydratedRef.current) return;
     setSaveState('saving');
     db.set(key, data)
       .then(() => setSaveState('saved'))
@@ -393,12 +464,58 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => { persistSlice('monthly_reviews', monthlyReviews); }, [monthlyReviews]);
   useEffect(() => { persistSlice('user_preferences', preferences); }, [preferences]);
 
-  // Manual Trigger Sync
-  const triggerSync = async () => {
-    if (!user || user.id === 'local_user') return;
-    await syncEngine.flushQueue(user.id);
-    const remote = await syncEngine.pullRemoteData(user.id);
-    if (remote) {
+  // Manual Trigger Sync with full diagnostic tracking
+  const triggerSync = async (): Promise<{
+    success: boolean;
+    flushedCount: number;
+    pulledCount: number;
+    error?: string;
+  }> => {
+    let activeUserId = (user?.id && user.id !== 'local_user') ? user.id : null;
+    if (!activeUserId && isSupabaseConfigured) {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.user?.id) {
+          activeUserId = session.user.id;
+          syncEngine.setUserId(activeUserId);
+        }
+      } catch {}
+    }
+
+    if (!activeUserId) {
+      return { success: false, flushedCount: 0, pulledCount: 0, error: 'Not signed into a cloud account.' };
+    }
+
+    try {
+      console.log(`[DataContext 🚀] triggerSync initiated for user ${activeUserId}...`);
+
+      // 1. Proactively test cloud schema health
+      const health = await syncEngine.checkCloudSchemaHealth();
+      if (!health.isHealthy) {
+        console.error('[DataContext ❌] Schema health check failed:', health.error);
+        return {
+          success: false,
+          flushedCount: 0,
+          pulledCount: 0,
+          error: health.error || 'Database tables not initialized in Supabase. Please run the SQL schema migration.',
+        };
+      }
+
+      // 2. Flush offline queue to Supabase
+      const flushedCount = await syncEngine.flushQueue(activeUserId);
+
+      // 3. Pull latest remote cloud data
+      const remote = await syncEngine.pullRemoteData(activeUserId);
+      if (!remote) {
+        const syncState = syncEngine.getSyncState();
+        return {
+          success: false,
+          flushedCount,
+          pulledCount: 0,
+          error: syncState.errorMessage || 'Failed to pull remote data from Supabase.',
+        };
+      }
+
       if (remote.tasks) setTasks(remote.tasks);
       if (remote.brainDumps) setBrainDumps(remote.brainDumps);
       if (remote.goals) setGoals(remote.goals);
@@ -422,6 +539,30 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (remote.householdInv) setHouseholdInventory(remote.householdInv);
       if (remote.weeklyReviews) setWeeklyReviews(remote.weeklyReviews);
       if (remote.monthlyReviews) setMonthlyReviews(remote.monthlyReviews);
+
+      const totalPulled = Object.values(remote).reduce(
+        (acc, arr) => acc + (Array.isArray(arr) ? arr.length : 0),
+        0
+      );
+
+      const latestState = syncEngine.getSyncState();
+      const hasPendingError = latestState.status === 'error';
+
+      console.log(`[DataContext ✅] triggerSync completed. Flushed: ${flushedCount}, Pulled: ${totalPulled}, HasPendingError: ${hasPendingError}`);
+      return {
+        success: !hasPendingError,
+        flushedCount,
+        pulledCount: totalPulled,
+        error: hasPendingError ? latestState.errorMessage : undefined,
+      };
+    } catch (err: any) {
+      console.error('[DataContext ❌] triggerSync exception:', err);
+      return {
+        success: false,
+        flushedCount: 0,
+        pulledCount: 0,
+        error: err?.message || 'Unexpected synchronization error.',
+      };
     }
   };
 
@@ -701,7 +842,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const updateGoal = async (id: string, updates: Partial<Goal>) => {
     setGoals(prev => {
-      const updated = prev.map(g => (g.id === id ? { ...g, ...updates } : g));
+      const updated = prev.map(g => (g.id === id ? { ...g, ...updates, updated_at: new Date().toISOString() } : g));
       const target = updated.find(g => g.id === id);
       if (target) {
         syncEngine.dispatchMutation('goals', 'UPSERT', target, user?.id);
@@ -728,7 +869,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const updateProject = async (id: string, updates: Partial<Project>) => {
     setProjects(prev => {
-      const updated = prev.map(p => (p.id === id ? { ...p, ...updates } : p));
+      const updated = prev.map(p => (p.id === id ? { ...p, ...updates, updated_at: new Date().toISOString() } : p));
       const target = updated.find(p => p.id === id);
       if (target) {
         syncEngine.dispatchMutation('projects', 'UPSERT', target, user?.id);
@@ -758,7 +899,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const updateHabit = async (id: string, updates: Partial<Habit>) => {
     setHabits(prev => {
-      const updated = prev.map(h => (h.id === id ? { ...h, ...updates } : h));
+      const updated = prev.map(h => (h.id === id ? { ...h, ...updates, updated_at: new Date().toISOString() } : h));
       const target = updated.find(h => h.id === id);
       if (target) {
         syncEngine.dispatchMutation('habits', 'UPSERT', target, user?.id);
@@ -905,7 +1046,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const updateCalendarEvent = async (id: string, updates: Partial<CalendarEvent>) => {
     setCalendarEvents(prev => {
-      const updated = prev.map(e => (e.id === id ? { ...e, ...updates } : e));
+      const updated = prev.map(e => (e.id === id ? { ...e, ...updates, updated_at: new Date().toISOString() } : e));
       const target = updated.find(e => e.id === id);
       if (target) {
         syncEngine.dispatchMutation('calendar_events', 'UPSERT', target, user?.id);
@@ -930,7 +1071,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const toggleBillPaid = async (id: string) => {
     setBills(prev => {
-      const updated = prev.map(b => (b.id === id ? { ...b, payment_status: (b.payment_status === 'paid' ? 'pending' : 'paid') as Bill['payment_status'], paid_date: new Date().toISOString() } : b));
+      const updated = prev.map(b => (b.id === id ? { ...b, payment_status: (b.payment_status === 'paid' ? 'pending' : 'paid') as Bill['payment_status'], paid_date: new Date().toISOString(), updated_at: new Date().toISOString() } : b));
       const target = updated.find(b => b.id === id);
       if (target) {
         syncEngine.dispatchMutation('bills', 'UPSERT', target, user?.id);
@@ -963,7 +1104,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const updateSavingsAmount = async (id: string, amount: number) => {
     setSavings(prev => {
-      const updated = prev.map(s => (s.id === id ? { ...s, current_amount: amount } : s));
+      const updated = prev.map(s => (s.id === id ? { ...s, current_amount: amount, updated_at: new Date().toISOString() } : s));
       const target = updated.find(s => s.id === id);
       if (target) {
         syncEngine.dispatchMutation('savings_goals', 'UPSERT', target, user?.id);
@@ -980,7 +1121,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const updateDebtBalance = async (id: string, newBalance: number) => {
     setDebts(prev => {
-      const updated = prev.map(d => (d.id === id ? { ...d, current_balance: newBalance } : d));
+      const updated = prev.map(d => (d.id === id ? { ...d, current_balance: newBalance, updated_at: new Date().toISOString() } : d));
       const target = updated.find(d => d.id === id);
       if (target) {
         syncEngine.dispatchMutation('debts', 'UPSERT', target, user?.id);
@@ -1005,7 +1146,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const updateLifeAdminStatus = async (id: string, status: LifeAdminItem['status']) => {
     setLifeAdmin(prev => {
-      const updated = prev.map(a => (a.id === id ? { ...a, status } : a));
+      const updated = prev.map(a => (a.id === id ? { ...a, status, updated_at: new Date().toISOString() } : a));
       const target = updated.find(a => a.id === id);
       if (target) {
         syncEngine.dispatchMutation('life_admin_items', 'UPSERT', target, user?.id);
@@ -1027,7 +1168,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const updateFollowUpStatus = async (id: string, status: FollowUpItem['status']) => {
     setFollowUps(prev => {
-      const updated = prev.map(f => (f.id === id ? { ...f, status } : f));
+      const updated = prev.map(f => (f.id === id ? { ...f, status, updated_at: new Date().toISOString() } : f));
       const target = updated.find(f => f.id === id);
       if (target) {
         syncEngine.dispatchMutation('follow_ups', 'UPSERT', target, user?.id);
@@ -1052,7 +1193,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const toggleHouseholdTask = async (id: string) => {
     setHouseholdTasks(prev => {
-      const updated = prev.map(h => (h.id === id ? { ...h, is_completed: !h.is_completed, last_completed: format(new Date(), 'yyyy-MM-dd') } : h));
+      const updated = prev.map(h => (h.id === id ? { ...h, is_completed: !h.is_completed, last_completed: format(new Date(), 'yyyy-MM-dd'), updated_at: new Date().toISOString() } : h));
       const target = updated.find(h => h.id === id);
       if (target) {
         syncEngine.dispatchMutation('household_tasks', 'UPSERT', target, user?.id);
@@ -1069,7 +1210,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const updateInventoryQuantity = async (id: string, delta: number) => {
     setHouseholdInventory(prev => {
-      const updated = prev.map(i => (i.id === id ? { ...i, quantity: Math.max(0, i.quantity + delta) } : i));
+      const updated = prev.map(i => (i.id === id ? { ...i, quantity: Math.max(0, i.quantity + delta), updated_at: new Date().toISOString() } : i));
       const target = updated.find(i => i.id === id);
       if (target) {
         syncEngine.dispatchMutation('household_inventory', 'UPSERT', target, user?.id);
@@ -1292,6 +1433,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         saveState,
         syncState,
         triggerSync,
+        dismissSyncError: () => syncEngine.dismissError(),
         tasks,
         addTask,
         updateTask,

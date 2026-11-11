@@ -1,9 +1,35 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { UserProfile, Entitlement } from '@/types';
 import { db } from '@/lib/indexedDB';
-import { defaultProfile } from '@/lib/starterData';
+import {
+  defaultProfile,
+  defaultPreferences,
+  defaultHabits,
+  defaultDopamineMenu,
+  defaultHouseholdTasks,
+  defaultTasks,
+  defaultBrainDumps,
+  defaultGoals,
+  defaultProjects,
+  defaultHabitLogs,
+  defaultMoods,
+  defaultEnergies,
+  defaultJournals,
+  defaultGratitudes,
+  defaultFocusSessions,
+  defaultCalendarEvents,
+  defaultBills,
+  defaultTransactions,
+  defaultSavings,
+  defaultDebts,
+  defaultLifeAdmin,
+  defaultFollowUps,
+  defaultHouseholdInventory,
+  defaultWeeklyReviews,
+  defaultMonthlyReviews,
+} from '@/lib/starterData';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
-import { syncEngine, ensureUUID } from '@/lib/syncEngine';
+import { syncEngine } from '@/lib/syncEngine';
 
 interface AuthContextType {
   user: UserProfile;
@@ -42,19 +68,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const initializeAuth = async () => {
       try {
-        // 1. First load local stored profile (instant offline-first)
-        const stored = await db.get<UserProfile>('profile', defaultProfile);
-        if (isMounted && stored) {
-          setUser(stored);
-          if (stored.id && stored.id !== 'local_user') {
-            setIsAuthenticated(true);
-            syncEngine.setUserId(stored.id);
-          }
-        }
-
-        // 2. If Supabase configured, check active session
         if (isSupabaseConfigured) {
-          const { data: { session } } = await supabase.auth.getSession();
+          const { data: { session }, error } = await supabase.auth.getSession();
+          if (error) {
+            console.warn('Supabase getSession error:', error.message);
+          }
+
           if (session?.user && isMounted) {
             setIsAuthenticated(true);
             syncEngine.setUserId(session.user.id);
@@ -68,25 +87,49 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
             const profileToSet: UserProfile = {
               id: session.user.id,
-              email: session.user.email || stored.email || '',
+              email: session.user.email || '',
               display_name:
                 remoteProfile?.display_name ||
                 session.user.user_metadata?.display_name ||
-                stored.display_name ||
+                session.user.email?.split('@')[0] ||
                 'My Life Reset',
-              planning_capacity: remoteProfile?.planning_capacity || stored.planning_capacity || 'steady',
-              preferred_planning_time:
-                remoteProfile?.preferred_planning_time || stored.preferred_planning_time || 'morning',
+              planning_capacity: remoteProfile?.planning_capacity || 'steady',
+              preferred_planning_time: remoteProfile?.preferred_planning_time || 'morning',
               onboarding_completed: true,
-              created_at: remoteProfile?.created_at || stored.created_at || new Date().toISOString(),
+              created_at: remoteProfile?.created_at || new Date().toISOString(),
             };
 
             setUser(profileToSet);
             await db.set('profile', profileToSet);
+
+            // Restore any stashed pending mutations from prior sign-out
+            await db.restoreUserStash(session.user.id);
+            await syncEngine.flushQueue(session.user.id);
+
+            // Pull cloud data into local storage
+            await syncEngine.pullRemoteData(session.user.id);
+            return;
+          }
+        }
+
+        // If no active session or not logged in, check stored profile
+        const stored = await db.get<UserProfile>('profile', defaultProfile);
+        if (isMounted) {
+          if (stored && stored.id && stored.id !== 'local_user') {
+            // User was previously authenticated on this device; preserve their identity offline
+            console.log('[AuthContext 📱] Preserving authenticated user session offline:', stored.id);
+            setUser(stored);
+            setIsAuthenticated(true);
+            await db.restoreUserStash(stored.id);
+            syncEngine.setUserId(stored.id);
+          } else {
+            setUser(stored || defaultProfile);
+            setIsAuthenticated(false);
+            syncEngine.setUserId(null);
           }
         }
       } catch (err) {
-        console.warn('Auth initialization:', err);
+        console.warn('Auth initialization exception:', err);
       } finally {
         if (isMounted) {
           setLoading(false);
@@ -104,8 +147,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (event === 'SIGNED_IN' && session?.user) {
           setIsAuthenticated(true);
           syncEngine.setUserId(session.user.id);
-          // Auto-migrate any local guest data and flush queue
           await syncEngine.migrateGuestData(session.user.id);
+          await syncEngine.pullRemoteData(session.user.id);
         } else if (event === 'SIGNED_OUT') {
           setIsAuthenticated(false);
           syncEngine.setUserId(null);
@@ -124,9 +167,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const updateProfile = async (updates: Partial<UserProfile>) => {
-    setUser(prev => {
+    setUser((prev) => {
       const updated: UserProfile = { ...prev, ...updates };
-      db.set('profile', updated).catch(err => console.error('Failed to save profile:', err));
+      db.set('profile', updated).catch((err) => console.error('Failed to save profile:', err));
       if (isAuthenticated && updated.id !== 'local_user') {
         syncEngine.dispatchMutation('profiles', 'UPSERT', updated, updated.id);
       }
@@ -146,10 +189,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         await supabase.auth.signOut();
       } catch {}
     }
-    await db.clear();
-    setIsAuthenticated(false);
-    syncEngine.setUserId(null);
-    setUser(defaultProfile);
+    await signOut();
   };
 
   const signUp = async (
@@ -157,38 +197,27 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     password?: string,
     displayName?: string
   ): Promise<{ error?: string }> => {
+    if (!isSupabaseConfigured) {
+      return {
+        error: 'Supabase credentials are not configured. Please add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to your environment.',
+      };
+    }
+
+    if (!email || !email.includes('@')) {
+      return { error: 'Please enter a valid email address.' };
+    }
+
+    if (!password || password.length < 6) {
+      return { error: 'Password must be at least 6 characters long.' };
+    }
+
     try {
-      if (!isSupabaseConfigured) {
-        // Local account simulation when Supabase credentials are not yet set
-        const newId = ensureUUID();
-        const newProfile: UserProfile = {
-          id: newId,
-          email,
-          display_name: displayName || email.split('@')[0] || 'My Life Reset',
-          planning_capacity: user.planning_capacity || 'steady',
-          preferred_planning_time: user.preferred_planning_time || 'morning',
-          onboarding_completed: true,
-          created_at: new Date().toISOString(),
-        };
-
-        setUser(newProfile);
-        setIsAuthenticated(true);
-        await db.set('profile', newProfile);
-        await syncEngine.migrateGuestData(newId);
-        syncEngine.setUserId(newId);
-        return {};
-      }
-
-      if (!password) {
-        return { error: 'Password is required to create an account.' };
-      }
-
       const { data, error } = await supabase.auth.signUp({
-        email,
+        email: email.trim(),
         password,
         options: {
           data: {
-            display_name: displayName || email.split('@')[0],
+            display_name: displayName?.trim() || email.split('@')[0],
           },
         },
       });
@@ -198,11 +227,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       if (data.user) {
+        // Check if user already exists (Supabase returns empty identities array when user already exists)
+        if (data.user.identities && data.user.identities.length === 0) {
+          return { error: 'An account with this email already exists. Please sign in instead.' };
+        }
+
         const newUserId = data.user.id;
         const newProfile: UserProfile = {
           id: newUserId,
           email: data.user.email || email,
-          display_name: displayName || email.split('@')[0] || 'My Life Reset',
+          display_name: displayName?.trim() || email.split('@')[0] || 'My Life Reset',
           planning_capacity: user.planning_capacity || 'steady',
           preferred_planning_time: user.preferred_planning_time || 'morning',
           onboarding_completed: true,
@@ -213,9 +247,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setIsAuthenticated(true);
         await db.set('profile', newProfile);
 
-        // Crucial: Migrate all guest records to the new user ID
-        await syncEngine.migrateGuestData(newUserId);
         syncEngine.setUserId(newUserId);
+        await syncEngine.migrateGuestData(newUserId);
+        await syncEngine.pullRemoteData(newUserId);
       }
 
       return {};
@@ -225,30 +259,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const signIn = async (email: string, password?: string): Promise<{ error?: string }> => {
+    if (!isSupabaseConfigured) {
+      return {
+        error: 'Supabase credentials are not configured. Please add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to your environment.',
+      };
+    }
+
+    if (!email || !email.includes('@')) {
+      return { error: 'Please enter a valid email address.' };
+    }
+
+    if (!password) {
+      return { error: 'Please enter your password.' };
+    }
+
     try {
-      if (!isSupabaseConfigured) {
-        const existingStored = await db.get<UserProfile>('profile', defaultProfile);
-        const resolvedId = existingStored.id && existingStored.id !== 'local_user' ? existingStored.id : ensureUUID();
-        const updatedProfile: UserProfile = {
-          ...existingStored,
-          id: resolvedId,
-          email,
-          display_name: existingStored.display_name || email.split('@')[0],
-        };
-        setUser(updatedProfile);
-        setIsAuthenticated(true);
-        await db.set('profile', updatedProfile);
-        await syncEngine.migrateGuestData(resolvedId);
-        syncEngine.setUserId(resolvedId);
-        return {};
-      }
-
-      if (!password) {
-        return { error: 'Password is required to sign in.' };
-      }
-
       const { data, error } = await supabase.auth.signInWithPassword({
-        email,
+        email: email.trim(),
         password,
       });
 
@@ -258,16 +285,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       if (data.user) {
         const userId = data.user.id;
-        setIsAuthenticated(true);
         syncEngine.setUserId(userId);
 
-        // Migrate local guest entries if any existed prior to login
-        await syncEngine.migrateGuestData(userId);
-
-        // Pull any remote data existing on the account
-        await syncEngine.pullRemoteData(userId);
-
-        // Refresh profile
+        // Fetch remote profile or construct from metadata
         const { data: remoteProfile } = await supabase
           .from('profiles')
           .select('*')
@@ -288,7 +308,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         };
 
         setUser(updatedProfile);
+        setIsAuthenticated(true);
         await db.set('profile', updatedProfile);
+
+        // Restore any stashed pending mutations from prior sign-out
+        await db.restoreUserStash(userId);
+
+        // Flush any restored mutations
+        await syncEngine.flushQueue(userId);
+
+        // Pull remote data into IndexedDB and notify DataContext
+        await syncEngine.pullRemoteData(userId);
       }
 
       return {};
@@ -297,24 +327,79 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  /**
+   * Safely signs out of Supabase.
+   * If there are pending mutations or local data, safely archives/stashes them
+   * under an account-isolated stash slot (`user_stash_${currentId}`) so they
+   * are never deleted, lost, or exposed to other accounts.
+   */
   const signOut = async () => {
+    const currentId = user.id;
+
     try {
       if (isSupabaseConfigured) {
         await supabase.auth.signOut();
       }
-    } catch {}
+    } catch (err) {
+      console.warn('SignOut error:', err);
+    }
 
-    // Return to local guest state without wiping the customer's planner data!
+    // Safely stash offline data & pending mutations so they are never lost
+    if (currentId && currentId !== 'local_user') {
+      console.log(`[AuthContext 🔒] Stashing offline data and pending mutations for user ${currentId}...`);
+      await db.stashUserData(currentId);
+    }
+
     setIsAuthenticated(false);
     syncEngine.setUserId(null);
+
+    // Clean active user's data from IndexedDB while PRESERVING user stashes
+    await db.clearActiveSession();
+    await db.clearQueue();
+
+    // Re-seed starter defaults for guest mode
+    await Promise.all([
+      db.set('profile', defaultProfile),
+      db.set('user_preferences', defaultPreferences),
+      db.set('habits', defaultHabits),
+      db.set('dopamine', defaultDopamineMenu),
+      db.set('household_tasks', defaultHouseholdTasks),
+      db.set('tasks', defaultTasks),
+      db.set('brain_dumps', defaultBrainDumps),
+      db.set('goals', defaultGoals),
+      db.set('projects', defaultProjects),
+      db.set('habit_logs', defaultHabitLogs),
+      db.set('moods', defaultMoods),
+      db.set('energies', defaultEnergies),
+      db.set('journals', defaultJournals),
+      db.set('gratitudes', defaultGratitudes),
+      db.set('focus_sessions', defaultFocusSessions),
+      db.set('calendar_events', defaultCalendarEvents),
+      db.set('bills', defaultBills),
+      db.set('transactions', defaultTransactions),
+      db.set('savings', defaultSavings),
+      db.set('debts', defaultDebts),
+      db.set('life_admin', defaultLifeAdmin),
+      db.set('follow_ups', defaultFollowUps),
+      db.set('household_inv', defaultHouseholdInventory),
+      db.set('weekly_reviews', defaultWeeklyReviews),
+      db.set('monthly_reviews', defaultMonthlyReviews),
+    ]);
+
+    setUser(defaultProfile);
+
+    // Notify DataContext to wipe in-memory collections immediately
+    syncEngine.notifyReset();
   };
 
   const resetPassword = async (email: string): Promise<{ error?: string }> => {
     if (!isSupabaseConfigured) {
-      return {};
+      return {
+        error: 'Supabase credentials are not configured. Please add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to your environment.',
+      };
     }
     try {
-      const { error } = await supabase.auth.resetPasswordForEmail(email);
+      const { error } = await supabase.auth.resetPasswordForEmail(email.trim());
       if (error) return { error: error.message };
       return {};
     } catch (err: any) {

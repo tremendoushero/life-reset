@@ -7,12 +7,18 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 
-export const isSupabaseConfigured = Boolean(
+const initialConfigured = Boolean(
   supabaseUrl && 
   supabaseAnonKey && 
   !supabaseUrl.includes('your-project-id') &&
   !supabaseAnonKey.includes('your-anon-key')
 );
+
+export let isSupabaseConfigured = initialConfigured;
+
+export function setIsSupabaseConfigured(configured: boolean) {
+  isSupabaseConfigured = configured;
+}
 
 // Real client or mock-safe client
 export const supabase: SupabaseClient = isSupabaseConfigured

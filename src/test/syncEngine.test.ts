@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { db } from '@/lib/indexedDB';
 import { syncEngine, ensureUUID } from '@/lib/syncEngine';
 import { Task, Habit, QueuedMutation } from '@/types';
@@ -8,6 +8,11 @@ describe('Offline-First Sync Engine & Migration System', () => {
     await db.clear();
     await db.clearQueue();
     syncEngine.setUserId('local_user');
+  });
+
+  afterEach(async () => {
+    syncEngine.setUserId(null);
+    await db.clearQueue();
   });
 
   it('generates valid RFC-4122 v4 UUIDs', () => {

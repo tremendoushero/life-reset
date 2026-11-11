@@ -6,6 +6,7 @@ import { Card } from '@/components/common/Card';
 import { Button } from '@/components/common/Button';
 import { Modal } from '@/components/common/Modal';
 import { AuthModal } from '@/components/features/AuthModal';
+import { SignOutConfirmModal } from '@/components/features/SignOutConfirmModal';
 import {
   Settings,
   Palette,
@@ -22,19 +23,23 @@ import {
   RefreshCw,
   LogOut,
   User,
+  ExternalLink,
+  X,
 } from 'lucide-react';
 
 export const SettingsPage: React.FC = () => {
   const { theme, setTheme, colorMode, setColorMode, fontSize, setFontSize, reducedMotion, setReducedMotion } = useTheme();
   const { user, updateProfile, isAuthenticated, signOut } = useAuth();
-  const { exportBackup, importBackup, clearAllData, syncState, triggerSync } = useData();
+  const { exportBackup, importBackup, clearAllData, syncState, triggerSync, dismissSyncError } = useData();
 
   const [displayName, setDisplayName] = useState(user?.display_name || '');
   const [profileSaved, setProfileSaved] = useState(false);
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
+  const [signOutConfirmOpen, setSignOutConfirmOpen] = useState(false);
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signup');
   const [isSyncingManual, setIsSyncingManual] = useState(false);
+  const [syncFeedback, setSyncFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [importStatus, setImportStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -56,8 +61,30 @@ export const SettingsPage: React.FC = () => {
 
   const handleManualSync = async () => {
     setIsSyncingManual(true);
-    await triggerSync();
-    setTimeout(() => setIsSyncingManual(false), 800);
+    setSyncFeedback(null);
+    try {
+      const res = await triggerSync();
+      if (res.success) {
+        setSyncFeedback({
+          type: 'success',
+          message: `Synced with Supabase! Uploaded ${res.flushedCount} pending changes, refreshed ${res.pulledCount} cloud items.`,
+        });
+        setTimeout(() => setSyncFeedback(null), 5000);
+      } else {
+        // Keep error visible until dismissed
+        setSyncFeedback({
+          type: 'error',
+          message: res.error || 'Sync failed. Please check connection and database tables.',
+        });
+      }
+    } catch (err: any) {
+      setSyncFeedback({
+        type: 'error',
+        message: err?.message || 'Sync failed.',
+      });
+    } finally {
+      setIsSyncingManual(false);
+    }
   };
 
   const handleExportData = async () => {
@@ -204,6 +231,68 @@ export const SettingsPage: React.FC = () => {
           </div>
         )}
 
+        {/* Sync Error / Database Notice Banner */}
+        {syncState.errorMessage && (
+          <div className="p-4 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 text-xs text-amber-900 dark:text-amber-200 space-y-2 relative">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 font-semibold">
+                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                <span>Cloud Database Setup Notice</span>
+              </div>
+              <button
+                type="button"
+                onClick={dismissSyncError}
+                className="p-1 rounded-md text-amber-700 hover:text-amber-900 dark:text-amber-300 dark:hover:text-amber-100 hover:bg-amber-200/50 dark:hover:bg-amber-900/50 transition"
+                title="Dismiss notice"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+            <p className="text-[11px] leading-relaxed pr-6">{syncState.errorMessage}</p>
+            {syncState.errorMessage.includes('SQL schema migration') && (
+              <div className="pt-1 flex flex-wrap items-center gap-2">
+                <a
+                  href="https://supabase.com/dashboard/project/jlojadolxjymaullfucb/sql/new"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-600 text-white font-medium text-[11px] hover:bg-amber-700 transition"
+                >
+                  Open Supabase SQL Editor
+                  <ExternalLink className="w-3.5 h-3.5" />
+                </a>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Sync Manual Feedback Notice */}
+        {syncFeedback && (
+          <div
+            className={`p-3 rounded-xl border text-xs flex items-center justify-between gap-2 ${
+              syncFeedback.type === 'success'
+                ? 'bg-sage-light dark:bg-sage-dark/30 border-sage/40 text-sage-dark dark:text-sage'
+                : 'bg-red-50 dark:bg-red-950/40 border-red-200 dark:border-red-900 text-red-700 dark:text-red-300'
+            }`}
+          >
+            <div className="flex items-center gap-2 flex-1">
+              {syncFeedback.type === 'success' ? (
+                <Check className="w-4 h-4 shrink-0" />
+              ) : (
+                <AlertTriangle className="w-4 h-4 shrink-0" />
+              )}
+              <span>{syncFeedback.message}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setSyncFeedback(null)}
+              className="p-1 rounded-md hover:bg-black/5 dark:hover:bg-white/10 transition shrink-0"
+              title="Dismiss message"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
+
         {/* Action Buttons */}
         <div className="flex flex-wrap items-center gap-3 pt-1">
           {!isAuthenticated ? (
@@ -246,7 +335,11 @@ export const SettingsPage: React.FC = () => {
                 variant="ghost"
                 size="sm"
                 onClick={async () => {
-                  await signOut();
+                  if (syncState.pendingCount > 0) {
+                    setSignOutConfirmOpen(true);
+                  } else {
+                    await signOut();
+                  }
                 }}
                 icon={<LogOut className="w-4 h-4" />}
               >
@@ -508,6 +601,19 @@ export const SettingsPage: React.FC = () => {
         isOpen={authModalOpen}
         onClose={() => setAuthModalOpen(false)}
         defaultMode={authMode}
+      />
+
+      {/* Warning modal if signing out with pending unsynced changes */}
+      <SignOutConfirmModal
+        isOpen={signOutConfirmOpen}
+        onClose={() => setSignOutConfirmOpen(false)}
+        onConfirmSignOut={async () => {
+          await signOut();
+          setSignOutConfirmOpen(false);
+        }}
+        pendingCount={syncState.pendingCount}
+        userEmail={user.email}
+        userId={user.id}
       />
     </div>
   );

@@ -3,7 +3,8 @@ import { Modal } from '@/components/common/Modal';
 import { Button } from '@/components/common/Button';
 import { useAuth } from '@/contexts/AuthContext';
 import { useData } from '@/contexts/DataContext';
-import { Cloud, Check, AlertCircle, ShieldCheck, Wifi, Sparkles } from 'lucide-react';
+import { Cloud, Check, AlertCircle, ShieldCheck, Wifi, Sparkles, X } from 'lucide-react';
+import { SignOutConfirmModal } from './SignOutConfirmModal';
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -17,7 +18,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   defaultMode = 'signup',
 }) => {
   const { signIn, signUp, resetPassword, isAuthenticated, user, signOut } = useAuth();
-  const { triggerSync } = useData();
+  const { triggerSync, syncState, dismissSyncError } = useData();
 
   const [mode, setMode] = useState<'signin' | 'signup' | 'forgot'>(defaultMode);
   const [email, setEmail] = useState('');
@@ -26,6 +27,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [manualSyncMessage, setManualSyncMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [isSignOutConfirmOpen, setIsSignOutConfirmOpen] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -46,11 +49,15 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           setErrorMessage(res.error);
         } else {
           setSuccessMessage('Account created and planner synced! Your local items are preserved.');
-          await triggerSync();
-          setTimeout(() => {
-            onClose();
-            setSuccessMessage(null);
-          }, 1500);
+          const syncRes = await triggerSync();
+          if (!syncRes.success && syncRes.error) {
+            setErrorMessage(syncRes.error);
+          } else {
+            setTimeout(() => {
+              onClose();
+              setSuccessMessage(null);
+            }, 1500);
+          }
         }
       } else if (mode === 'signin') {
         if (!email.trim() || !password) {
@@ -64,11 +71,15 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           setErrorMessage(res.error);
         } else {
           setSuccessMessage('Signed in successfully! Your planner is now synced.');
-          await triggerSync();
-          setTimeout(() => {
-            onClose();
-            setSuccessMessage(null);
-          }, 1500);
+          const syncRes = await triggerSync();
+          if (!syncRes.success && syncRes.error) {
+            setErrorMessage(syncRes.error);
+          } else {
+            setTimeout(() => {
+              onClose();
+              setSuccessMessage(null);
+            }, 1500);
+          }
         }
       } else if (mode === 'forgot') {
         if (!email.trim()) {
@@ -116,13 +127,73 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             </div>
           </div>
 
+          {syncState.errorMessage && (
+            <div className="p-3.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 text-xs text-amber-900 dark:text-amber-200 space-y-1.5 relative">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 font-semibold">
+                  <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                  <span>Cloud Database Notice</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={dismissSyncError}
+                  className="p-1 rounded-md text-amber-700 hover:text-amber-900 dark:text-amber-300 dark:hover:text-amber-100 hover:bg-amber-200/50 dark:hover:bg-amber-900/50 transition"
+                  title="Dismiss notice"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+              <p className="text-[11px] leading-relaxed pr-6">{syncState.errorMessage}</p>
+            </div>
+          )}
+
+          {manualSyncMessage && (
+            <div
+              className={`p-3 rounded-xl border text-xs flex items-center justify-between gap-2 ${
+                manualSyncMessage.type === 'success'
+                  ? 'bg-sage-light dark:bg-sage-dark/30 border-sage/40 text-sage-dark dark:text-sage'
+                  : 'bg-red-50 dark:bg-red-950/40 border-red-200 dark:border-red-900 text-red-700 dark:text-red-300'
+              }`}
+            >
+              <div className="flex items-center gap-2 flex-1">
+                {manualSyncMessage.type === 'success' ? (
+                  <Check className="w-4 h-4 shrink-0" />
+                ) : (
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                )}
+                <span>{manualSyncMessage.text}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setManualSyncMessage(null)}
+                className="p-1 rounded-md hover:bg-black/5 dark:hover:bg-white/10 transition shrink-0"
+                title="Dismiss message"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
+
           <div className="flex items-center justify-between pt-2">
             <Button
               variant="outline"
               size="sm"
               onClick={async () => {
-                await triggerSync();
-                onClose();
+                setManualSyncMessage(null);
+                const syncRes = await triggerSync();
+                if (syncRes.success) {
+                  setManualSyncMessage({
+                    type: 'success',
+                    text: `Synced! Uploaded ${syncRes.flushedCount} changes, refreshed ${syncRes.pulledCount} cloud items.`,
+                  });
+                  setTimeout(() => setManualSyncMessage(null), 5000);
+                } else {
+                  // Errors persist until dismissed by user
+                  setManualSyncMessage({
+                    type: 'error',
+                    text: syncRes.error || 'Failed to sync with Supabase.',
+                  });
+                }
               }}
             >
               Sync Now
@@ -132,14 +203,32 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               variant="danger"
               size="sm"
               onClick={async () => {
-                await signOut();
-                onClose();
+                if (syncState.pendingCount > 0) {
+                  setIsSignOutConfirmOpen(true);
+                } else {
+                  await signOut();
+                  onClose();
+                }
               }}
             >
               Sign Out on This Device
             </Button>
           </div>
         </div>
+
+        {/* Warning modal if signing out with pending unsynced changes */}
+        <SignOutConfirmModal
+          isOpen={isSignOutConfirmOpen}
+          onClose={() => setIsSignOutConfirmOpen(false)}
+          onConfirmSignOut={async () => {
+            await signOut();
+            setIsSignOutConfirmOpen(false);
+            onClose();
+          }}
+          pendingCount={syncState.pendingCount}
+          userEmail={user.email}
+          userId={user.id}
+        />
       </Modal>
     );
   }

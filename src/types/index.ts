@@ -355,6 +355,7 @@ export interface QueuedMutation {
   payload: any;
   timestamp: string;
   retry_count: number;
+  last_error?: string;
 }
 
 export interface CloudSyncState {
@@ -362,6 +363,14 @@ export interface CloudSyncState {
   lastSyncedAt: string | null;
   pendingCount: number;
   errorMessage?: string;
+}
+
+export interface UserStash {
+  userId: string;
+  email?: string;
+  queue: QueuedMutation[];
+  collections: Record<string, any>;
+  stashedAt: string;
 }
 
 
