@@ -110,6 +110,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         onClose={onClose}
         title="Your Cloud Account"
         description="Your planner is connected and syncing."
+        closeAriaLabel="Close sign in window"
       >
         <div className="space-y-4 pt-1">
           <div className="p-4 rounded-2xl bg-sage-light/70 dark:bg-espresso-800 border border-sage/40 flex items-start gap-3">
@@ -237,6 +238,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     <Modal
       isOpen={isOpen}
       onClose={onClose}
+      closeAriaLabel="Close sign in window"
       title={
         mode === 'signup'
           ? 'Create Account & Enable Cloud Sync'
