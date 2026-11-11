@@ -55,7 +55,7 @@ export const Modal: React.FC<ModalProps> = ({
         aria-modal="true"
       >
         <div className="flex items-start justify-between gap-3 p-4 sm:p-5 border-b border-ivory-200 dark:border-espresso-700">
-          <div className="flex-1 min-w-0 pr-1">
+          <div className="flex-1 min-w-0 pr-2">
             {title && (
               <h3 className="font-serif text-base sm:text-lg font-semibold text-espresso-900 dark:text-ivory-50 leading-snug break-words">
                 {title}
@@ -68,7 +68,7 @@ export const Modal: React.FC<ModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="shrink-0 -mr-1.5 -mt-1 sm:mr-0 sm:mt-0 min-w-[44px] min-h-[44px] w-11 h-11 flex items-center justify-center rounded-xl text-espresso-500 hover:text-espresso-800 dark:text-ivory-300 dark:hover:text-ivory-50 hover:bg-ivory-200/80 dark:hover:bg-espresso-700 active:scale-95 transition-all touch-manipulation cursor-pointer"
+            className="shrink-0 min-w-[44px] min-h-[44px] w-11 h-11 flex items-center justify-center rounded-xl bg-ivory-100/90 hover:bg-ivory-200/90 dark:bg-espresso-700/60 dark:hover:bg-espresso-600 border border-ivory-300 dark:border-espresso-600/80 text-espresso-700 hover:text-espresso-900 dark:text-ivory-200 dark:hover:text-ivory-50 active:scale-95 transition-all touch-manipulation cursor-pointer"
             aria-label={closeAriaLabel}
           >
             <X className="w-5 h-5" />
