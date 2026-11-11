@@ -8,6 +8,7 @@ interface ModalProps {
   description?: string;
   children: React.ReactNode;
   maxWidth?: 'sm' | 'md' | 'lg' | 'xl' | '2xl';
+  closeAriaLabel?: string;
 }
 
 export const Modal: React.FC<ModalProps> = ({
@@ -17,6 +18,7 @@ export const Modal: React.FC<ModalProps> = ({
   description,
   children,
   maxWidth = 'md',
+  closeAriaLabel = 'Close dialog',
 }) => {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -39,32 +41,40 @@ export const Modal: React.FC<ModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-espresso-900/40 backdrop-blur-sm animate-fade-in">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-espresso-900/40 backdrop-blur-sm animate-fade-in"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) {
+          onClose();
+        }
+      }}
+    >
       <div
         className={`w-full ${maxWidths[maxWidth]} bg-cardwhite dark:bg-espresso-800 rounded-2xl border border-ivory-300 dark:border-espresso-700 shadow-soft-lg overflow-hidden animate-slide-up`}
         role="dialog"
         aria-modal="true"
       >
-        <div className="flex items-center justify-between p-5 border-b border-ivory-200 dark:border-espresso-700">
-          <div>
+        <div className="flex items-start justify-between gap-3 p-4 sm:p-5 border-b border-ivory-200 dark:border-espresso-700">
+          <div className="flex-1 min-w-0 pr-2">
             {title && (
-              <h3 className="font-serif text-lg font-semibold text-espresso-900 dark:text-ivory-50">
+              <h3 className="font-serif text-base sm:text-lg font-semibold text-espresso-900 dark:text-ivory-50 leading-snug break-words">
                 {title}
               </h3>
             )}
             {description && (
-              <p className="text-xs text-espresso-500 dark:text-ivory-300 mt-0.5">{description}</p>
+              <p className="text-xs text-espresso-500 dark:text-ivory-300 mt-1 leading-relaxed break-words">{description}</p>
             )}
           </div>
           <button
+            type="button"
             onClick={onClose}
-            className="p-1.5 rounded-lg text-espresso-400 hover:text-espresso-700 dark:text-ivory-400 dark:hover:text-ivory-100 hover:bg-ivory-200 dark:hover:bg-espresso-700 transition-colors"
-            aria-label="Close dialog"
+            className="shrink-0 min-w-[44px] min-h-[44px] w-11 h-11 flex items-center justify-center rounded-xl bg-ivory-100/90 hover:bg-ivory-200/90 dark:bg-espresso-700/60 dark:hover:bg-espresso-600 border border-ivory-300 dark:border-espresso-600/80 text-espresso-700 hover:text-espresso-900 dark:text-ivory-200 dark:hover:text-ivory-50 active:scale-95 transition-all touch-manipulation cursor-pointer"
+            aria-label={closeAriaLabel}
           >
             <X className="w-5 h-5" />
           </button>
         </div>
-        <div className="p-5 max-h-[80vh] overflow-y-auto">{children}</div>
+        <div className="p-4 sm:p-5 max-h-[80vh] overflow-y-auto">{children}</div>
       </div>
     </div>
   );
