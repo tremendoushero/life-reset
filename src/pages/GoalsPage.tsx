@@ -5,13 +5,17 @@ import { Card } from '@/components/common/Card';
 import { Button } from '@/components/common/Button';
 import { Modal } from '@/components/common/Modal';
 import { Input } from '@/components/common/Input';
-import { Sparkles, Target, FolderKanban, Plus, CheckCircle2, ChevronRight, HelpCircle } from 'lucide-react';
+import { GoalDetailModal } from '@/components/features/GoalDetailModal';
+import { Sparkles, Target, FolderKanban, Plus, Check, ChevronRight } from 'lucide-react';
 
 export const GoalsPage: React.FC = () => {
-  const { goals, addGoal, updateGoal, deleteGoal, projects, addProject, updateProject } = useData();
+  const { goals, addGoal, toggleGoalMilestone, projects, addProject } = useData();
 
   const [activeTab, setActiveTab] = useState<'goals' | 'projects'>('goals');
   const [modalOpen, setModalOpen] = useState(false);
+  const [selectedGoalId, setSelectedGoalId] = useState<string | null>(null);
+
+  const selectedGoal = goals.find(g => g.id === selectedGoalId) || null;
 
   // New Goal / Project form state
   const [title, setTitle] = useState('');
@@ -104,20 +108,35 @@ export const GoalsPage: React.FC = () => {
       {activeTab === 'goals' && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {goals.map(goal => (
-            <Card key={goal.id} className="p-5 flex flex-col justify-between">
+            <Card
+              key={goal.id}
+              onClick={() => setSelectedGoalId(goal.id)}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  setSelectedGoalId(goal.id);
+                }
+              }}
+              className="p-5 flex flex-col justify-between cursor-pointer hover:border-primary/50 hover:shadow-soft-md transition-all group focus:outline-none focus:ring-2 focus:ring-primary/40 select-none"
+            >
               <div>
                 <div className="flex items-center justify-between gap-2 mb-2">
                   <span className="text-[11px] font-semibold uppercase px-2 py-0.5 rounded-full bg-softpeach-light text-softpeach-dark">
                     {goal.category}
                   </span>
-                  <span className="text-xs font-semibold text-primary">{goal.progress}%</span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs font-semibold text-primary">{goal.progress}%</span>
+                    <ChevronRight className="w-3.5 h-3.5 text-espresso-400 group-hover:text-primary transition-colors" />
+                  </div>
                 </div>
 
-                <h3 className="font-serif text-lg font-bold text-espresso-900 dark:text-ivory-50">
+                <h3 className="font-serif text-lg font-bold text-espresso-900 dark:text-ivory-50 group-hover:text-primary transition-colors">
                   {goal.title}
                 </h3>
                 {goal.description && (
-                  <p className="text-xs text-espresso-600 dark:text-ivory-300 mt-1">
+                  <p className="text-xs text-espresso-600 dark:text-ivory-300 mt-1 line-clamp-2">
                     {goal.description}
                   </p>
                 )}
@@ -144,23 +163,57 @@ export const GoalsPage: React.FC = () => {
               </div>
 
               {/* Milestones list if present */}
-              {goal.milestones && goal.milestones.length > 0 && (
-                <div className="mt-4 pt-3 border-t border-ivory-200 dark:border-espresso-700 space-y-1">
-                  <span className="text-[11px] font-semibold text-espresso-400 block mb-1">
-                    Milestones:
-                  </span>
-                  {goal.milestones.map(m => (
-                    <div key={m.id} className="flex items-center gap-2 text-xs">
-                      <CheckCircle2
-                        className={`w-3.5 h-3.5 ${
-                          m.is_completed ? 'text-sage' : 'text-espresso-300'
+              {goal.milestones && goal.milestones.length > 0 ? (
+                <div className="mt-4 pt-3 border-t border-ivory-200 dark:border-espresso-700 space-y-1.5">
+                  <div className="flex items-center justify-between text-[11px] font-semibold text-espresso-500 dark:text-ivory-400 mb-1">
+                    <span>Milestones:</span>
+                    <span>
+                      {goal.milestones.filter(m => m.is_completed).length} of {goal.milestones.length} done
+                    </span>
+                  </div>
+                  {goal.milestones.slice(0, 3).map(m => (
+                    <div
+                      key={m.id}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleGoalMilestone(goal.id, m.id);
+                      }}
+                      className="flex items-center gap-2 text-xs py-1 px-1.5 rounded-lg hover:bg-ivory-200/50 dark:hover:bg-espresso-700/50 transition-colors"
+                    >
+                      <button
+                        type="button"
+                        className={`w-4 h-4 rounded border flex items-center justify-center transition-colors shrink-0 ${
+                          m.is_completed
+                            ? 'bg-sage border-sage text-white'
+                            : 'border-espresso-300 dark:border-espresso-600 bg-white dark:bg-espresso-800'
                         }`}
-                      />
-                      <span className={m.is_completed ? 'line-through text-espresso-400' : ''}>
+                        aria-label={m.is_completed ? `Mark ${m.title} incomplete` : `Mark ${m.title} complete`}
+                      >
+                        {m.is_completed && <Check className="w-3 h-3 stroke-[2.5]" />}
+                      </button>
+                      <span
+                        className={`truncate flex-1 ${
+                          m.is_completed
+                            ? 'line-through text-espresso-400 dark:text-ivory-400'
+                            : 'text-espresso-800 dark:text-ivory-100'
+                        }`}
+                      >
                         {m.title}
                       </span>
                     </div>
                   ))}
+                  {goal.milestones.length > 3 && (
+                    <span className="text-[10px] text-espresso-400 dark:text-ivory-400 block pt-0.5">
+                      +{goal.milestones.length - 3} more milestone{goal.milestones.length - 3 === 1 ? '' : 's'} · click to view all
+                    </span>
+                  )}
+                </div>
+              ) : (
+                <div className="mt-4 pt-3 border-t border-ivory-200 dark:border-espresso-700 flex items-center justify-between text-[11px] text-espresso-400 dark:text-ivory-400">
+                  <span>0 milestones (0%)</span>
+                  <span className="text-primary font-medium group-hover:underline flex items-center gap-1">
+                    Add milestones →
+                  </span>
                 </div>
               )}
             </Card>
@@ -258,6 +311,14 @@ export const GoalsPage: React.FC = () => {
           </div>
         </form>
       </Modal>
+
+      {/* Goal Details & Milestones Modal */}
+      <GoalDetailModal
+        key={selectedGoalId || 'none'}
+        goal={selectedGoal}
+        isOpen={Boolean(selectedGoalId)}
+        onClose={() => setSelectedGoalId(null)}
+      />
     </div>
   );
 };

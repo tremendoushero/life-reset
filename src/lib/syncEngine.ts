@@ -61,6 +61,11 @@ function sanitizeRowPayload(table: string, payload: any): any {
   if (!payload || typeof payload !== 'object') return payload;
   const clean: any = { ...payload };
 
+  // Ensure id is a valid UUID for PostgreSQL
+  if (clean.id) {
+    clean.id = ensureUUID(clean.id);
+  }
+
   // Remove nested relation arrays before table upsert
   delete clean.subtasks;
   delete clean.milestones;
@@ -112,6 +117,7 @@ class SyncEngine {
   private periodicInterval: any = null;
   private retryTimeout: any = null;
   private realtimeChannel: any = null;
+  private dismissedErrors: Set<string> = new Set();
 
   private state: CloudSyncState = {
     status: 'local_only',
@@ -155,6 +161,7 @@ class SyncEngine {
     this.currentUserId = userId;
     this.flushPromise = null;
     this.pullPromise = null;
+    this.dismissedErrors.clear();
     if (this.retryTimeout) {
       clearTimeout(this.retryTimeout);
       this.retryTimeout = null;
@@ -252,7 +259,14 @@ class SyncEngine {
   }
 
   public dismissError() {
+    if (this.state.errorMessage) {
+      this.dismissedErrors.add(this.state.errorMessage);
+    }
     this.updateState({ errorMessage: undefined });
+  }
+
+  public clearDismissedErrors() {
+    this.dismissedErrors.clear();
   }
 
   public async updatePendingCount(): Promise<number> {
@@ -318,7 +332,7 @@ class SyncEngine {
 
     try {
       console.log('[SyncEngine 🔍] Checking Supabase cloud schema health...');
-      const checkTables = ['tasks', 'profiles', 'goals', 'habits', 'brain_dump_entries'];
+      const checkTables = ['tasks', 'goals', 'habits', 'brain_dump_entries'];
       const missing: string[] = [];
 
       for (const t of checkTables) {
@@ -565,11 +579,13 @@ class SyncEngine {
           console.log(`[SyncEngine ✅] Direct ${operation} to ${table} succeeded.`);
           if (this.state.status !== 'offline') {
             const queue = await db.getQueue();
-            const queueError = queue.find(m => m.last_error)?.last_error;
+            const criticalQueue = queue.filter(m => !OPTIONAL_SYNC_TABLES.has(m.table));
+            const queueError = criticalQueue.find(m => m.last_error)?.last_error;
+            const hasActiveError = queueError && !this.dismissedErrors.has(queueError);
             this.updateState({
-              status: queue.length > 0 ? (queueError ? 'error' : 'queued') : 'synced',
+              status: criticalQueue.length > 0 ? (hasActiveError ? 'error' : 'queued') : 'synced',
               pendingCount: queue.length,
-              errorMessage: queueError || undefined,
+              errorMessage: hasActiveError ? queueError : undefined,
               lastSyncedAt: new Date().toISOString(),
             });
           }
@@ -672,11 +688,13 @@ class SyncEngine {
         const hasAuth = await this.ensureAuthenticatedSession(userId);
         if (!hasAuth) {
           console.warn(`[SyncEngine ⚠️] Pausing outbox flush: no active authenticated Supabase session for user ${userId}.`);
-          const queueError = queue.find(m => m.last_error)?.last_error;
+          const criticalQueue = queue.filter(m => !OPTIONAL_SYNC_TABLES.has(m.table));
+          const queueError = criticalQueue.find(m => m.last_error)?.last_error;
+          const hasActiveError = queueError && !this.dismissedErrors.has(queueError);
           this.updateState({
-            status: queueError ? 'error' : 'queued',
+            status: hasActiveError ? 'error' : 'queued',
             pendingCount: queue.length,
-            errorMessage: queueError || undefined,
+            errorMessage: hasActiveError ? queueError : undefined,
           });
           return 0;
         }
@@ -687,6 +705,9 @@ class SyncEngine {
           try {
             const { table, operation, payload } = mutation;
             const mutationPayload = sanitizeRowPayload(table, { ...payload, user_id: userId });
+            if (mutationPayload.id && mutationPayload.id !== payload.id) {
+              mutation.payload.id = mutationPayload.id;
+            }
 
             if (operation === 'UPSERT') {
               const upsertOpts = (table === 'user_preferences' || table === 'dashboard_layouts')
@@ -781,12 +802,14 @@ class SyncEngine {
         }
 
         const remaining = await db.getQueue();
-        const queueError = remaining.find(m => m.last_error)?.last_error;
+        const criticalRemaining = remaining.filter(m => !OPTIONAL_SYNC_TABLES.has(m.table));
+        const queueError = criticalRemaining.find(m => m.last_error)?.last_error;
+        const hasActiveError = queueError && !this.dismissedErrors.has(queueError);
 
         this.updateState({
-          status: remaining.length > 0 ? (queueError ? 'error' : 'queued') : 'synced',
+          status: criticalRemaining.length > 0 ? (hasActiveError ? 'error' : 'queued') : 'synced',
           pendingCount: remaining.length,
-          errorMessage: queueError || undefined,
+          errorMessage: hasActiveError ? queueError : undefined,
           lastSyncedAt: new Date().toISOString(),
         });
       } catch (err: any) {
@@ -851,12 +874,17 @@ class SyncEngine {
             modified = true;
             totalMigrated++;
             const sanitizedId = ensureUUID(item.id);
-            return {
+            const migratedItem: any = {
               ...item,
               id: sanitizedId,
               user_id: newUserId,
-              updated_at: item.updated_at || new Date().toISOString(),
             };
+            if (!TABLES_WITHOUT_UPDATED_AT.has(col.table)) {
+              migratedItem.updated_at = item.updated_at || new Date().toISOString();
+            } else {
+              delete migratedItem.updated_at;
+            }
+            return migratedItem;
           }
           return item;
         });
@@ -865,6 +893,16 @@ class SyncEngine {
           await db.set(col.key, updatedItems);
           for (const item of updatedItems) {
             await this.dispatchMutation(col.table, 'UPSERT', item, newUserId);
+            if (col.key === 'tasks' && Array.isArray(item.subtasks)) {
+              for (const sub of item.subtasks) {
+                await this.dispatchMutation('task_subtasks', 'UPSERT', { ...sub, user_id: newUserId, task_id: item.id }, newUserId);
+              }
+            }
+            if (col.key === 'goals' && Array.isArray(item.milestones)) {
+              for (const m of item.milestones) {
+                await this.dispatchMutation('goal_milestones', 'UPSERT', { ...m, user_id: newUserId, goal_id: item.id }, newUserId);
+              }
+            }
           }
         }
       }
@@ -1067,11 +1105,13 @@ class SyncEngine {
 
         if (this.state.status !== 'offline') {
           const queue = await db.getQueue();
-          const queueError = queue.find(m => m.last_error)?.last_error;
+          const criticalQueue = queue.filter(m => !OPTIONAL_SYNC_TABLES.has(m.table));
+          const queueError = criticalQueue.find(m => m.last_error)?.last_error;
+          const hasActiveError = queueError && !this.dismissedErrors.has(queueError);
           this.updateState({
-            status: queue.length > 0 ? (queueError ? 'error' : 'queued') : 'synced',
+            status: criticalQueue.length > 0 ? (hasActiveError ? 'error' : 'queued') : 'synced',
             pendingCount: queue.length,
-            errorMessage: queueError || undefined,
+            errorMessage: hasActiveError ? queueError : undefined,
             lastSyncedAt: new Date().toISOString(),
           });
         }

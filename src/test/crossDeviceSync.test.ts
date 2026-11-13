@@ -711,10 +711,15 @@ describe('Cross-Device Cloud Synchronization & Auth Verification', () => {
       expect(queueAfter[0].last_error).toContain('Code: 42501');
       expect(queueAfter[0].retry_count).toBeGreaterThan(0);
 
-      // Sync state clearly reports the actual permission error instead of falsely reporting success
+      // Critical sync state remains healthy (not blocked) while preserving optional error on mutation
       const state = syncEngine.getSyncState();
-      expect(state.status).toBe('error');
-      expect(state.errorMessage).toContain('42501');
+      expect(state.status).toBe('synced');
+      expect(state.errorMessage).toBeUndefined();
+
+      const breakdown = await syncEngine.getPendingBreakdown();
+      expect(breakdown.critical).toBe(0);
+      expect(breakdown.optional).toBe(1);
+      expect(breakdown.optionalError).toContain('42501');
 
       // 4. Remote pull still succeeds for tasks, habits, and goals despite dopamine_activities error
       const pulled = await syncEngine.pullRemoteData(testUserId);
