@@ -96,6 +96,7 @@ export interface Goal {
   next_action?: string;
   status: 'not_started' | 'in_progress' | 'paused' | 'completed';
   created_at: string;
+  updated_at?: string;
   milestones?: GoalMilestone[];
 }
 
@@ -107,6 +108,14 @@ export interface GoalMilestone {
   target_date?: string;
   is_completed: boolean;
   sort_order: number;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export function calculateGoalProgress(milestones?: GoalMilestone[]): number {
+  if (!milestones || milestones.length === 0) return 0;
+  const completed = milestones.filter(m => m.is_completed).length;
+  return Math.min(100, Math.max(0, Math.round((completed / milestones.length) * 100)));
 }
 
 export interface Project {

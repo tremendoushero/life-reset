@@ -3,6 +3,8 @@ import {
   Task,
   BrainDumpEntry,
   Goal,
+  GoalMilestone,
+  calculateGoalProgress,
   Project,
   Habit,
   HabitLog,
@@ -126,6 +128,10 @@ interface DataContextType {
   addGoal: (goal: Omit<Goal, 'id' | 'user_id' | 'created_at'>) => Promise<void>;
   updateGoal: (id: string, updates: Partial<Goal>) => Promise<void>;
   deleteGoal: (id: string) => Promise<void>;
+  addGoalMilestone: (goalId: string, title: string, targetDate?: string) => Promise<void>;
+  toggleGoalMilestone: (goalId: string, milestoneId: string) => Promise<void>;
+  updateGoalMilestone: (goalId: string, milestoneId: string, updates: Partial<GoalMilestone>) => Promise<void>;
+  deleteGoalMilestone: (goalId: string, milestoneId: string) => Promise<void>;
   projects: Project[];
   addProject: (project: Omit<Project, 'id' | 'user_id' | 'created_at'>) => Promise<void>;
   updateProject: (id: string, updates: Partial<Project>) => Promise<void>;
@@ -240,7 +246,12 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const unsubRemote = syncEngine.onRemoteData((remote) => {
       if (remote.tasks) setTasks(remote.tasks);
       if (remote.brainDumps) setBrainDumps(remote.brainDumps);
-      if (remote.goals) setGoals(remote.goals);
+      if (remote.goals) {
+        setGoals(remote.goals.map(g => ({
+          ...g,
+          progress: g.milestones && g.milestones.length > 0 ? calculateGoalProgress(g.milestones) : (g.progress || 0),
+        })));
+      }
       if (remote.projects) setProjects(remote.projects);
       if (remote.habits) setHabits(remote.habits);
       if (remote.habitLogs) setHabitLogs(remote.habitLogs);
@@ -518,7 +529,12 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       if (remote.tasks) setTasks(remote.tasks);
       if (remote.brainDumps) setBrainDumps(remote.brainDumps);
-      if (remote.goals) setGoals(remote.goals);
+      if (remote.goals) {
+        setGoals(remote.goals.map(g => ({
+          ...g,
+          progress: g.milestones && g.milestones.length > 0 ? calculateGoalProgress(g.milestones) : (g.progress || 0),
+        })));
+      }
       if (remote.projects) setProjects(remote.projects);
       if (remote.habits) setHabits(remote.habits);
       if (remote.habitLogs) setHabitLogs(remote.habitLogs);
@@ -829,12 +845,14 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Goals & Projects
   // ----------------------------------------------------
   const addGoal = async (goal: Omit<Goal, 'id' | 'user_id' | 'created_at'>) => {
+    const milestones = goal.milestones || [];
     const newGoal: Goal = {
       ...goal,
       id: ensureUUID(),
       user_id: user?.id || 'local_user',
       created_at: new Date().toISOString(),
-      milestones: [],
+      milestones,
+      progress: calculateGoalProgress(milestones),
     };
     setGoals(prev => [newGoal, ...prev]);
     syncEngine.dispatchMutation('goals', 'UPSERT', newGoal, user?.id);
@@ -842,7 +860,21 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const updateGoal = async (id: string, updates: Partial<Goal>) => {
     setGoals(prev => {
-      const updated = prev.map(g => (g.id === id ? { ...g, ...updates, updated_at: new Date().toISOString() } : g));
+      const updated = prev.map(g => {
+        if (g.id !== id) return g;
+        const mergedMilestones = updates.milestones !== undefined ? updates.milestones : g.milestones;
+        const newProgress = updates.progress !== undefined
+          ? updates.progress
+          : updates.milestones !== undefined
+            ? calculateGoalProgress(mergedMilestones)
+            : g.progress;
+        return {
+          ...g,
+          ...updates,
+          progress: newProgress,
+          updated_at: new Date().toISOString(),
+        };
+      });
       const target = updated.find(g => g.id === id);
       if (target) {
         syncEngine.dispatchMutation('goals', 'UPSERT', target, user?.id);
@@ -854,6 +886,126 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const deleteGoal = async (id: string) => {
     setGoals(prev => prev.filter(g => g.id !== id));
     syncEngine.dispatchMutation('goals', 'DELETE', { id }, user?.id);
+  };
+
+  const addGoalMilestone = async (goalId: string, title: string, targetDate?: string) => {
+    const targetGoal = goals.find(g => g.id === goalId);
+    const existingMilestones = targetGoal?.milestones || [];
+    const newMilestone: GoalMilestone = {
+      id: ensureUUID(),
+      goal_id: goalId,
+      user_id: user?.id || 'local_user',
+      title: title.trim(),
+      target_date: targetDate || undefined,
+      is_completed: false,
+      sort_order: existingMilestones.length,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    setGoals(prev => {
+      const updated = prev.map(g => {
+        if (g.id !== goalId) return g;
+        const nextMilestones = [...(g.milestones || []), newMilestone];
+        const nextProgress = calculateGoalProgress(nextMilestones);
+        return {
+          ...g,
+          milestones: nextMilestones,
+          progress: nextProgress,
+          updated_at: new Date().toISOString(),
+        };
+      });
+      const target = updated.find(g => g.id === goalId);
+      if (target) {
+        syncEngine.dispatchMutation('goals', 'UPSERT', target, user?.id);
+      }
+      return updated;
+    });
+
+    syncEngine.dispatchMutation('goal_milestones', 'UPSERT', newMilestone, user?.id);
+  };
+
+  const toggleGoalMilestone = async (goalId: string, milestoneId: string) => {
+    setGoals(prev => {
+      const updated = prev.map(g => {
+        if (g.id !== goalId) return g;
+        const nextMilestones = (g.milestones || []).map(m => {
+          if (m.id === milestoneId) {
+            return { ...m, is_completed: !m.is_completed, updated_at: new Date().toISOString() };
+          }
+          return m;
+        });
+        const nextProgress = calculateGoalProgress(nextMilestones);
+        return {
+          ...g,
+          milestones: nextMilestones,
+          progress: nextProgress,
+          updated_at: new Date().toISOString(),
+        };
+      });
+      const target = updated.find(g => g.id === goalId);
+      if (target) {
+        syncEngine.dispatchMutation('goals', 'UPSERT', target, user?.id);
+        const m = target.milestones?.find(item => item.id === milestoneId);
+        if (m) {
+          syncEngine.dispatchMutation('goal_milestones', 'UPSERT', m, user?.id);
+        }
+      }
+      return updated;
+    });
+  };
+
+  const updateGoalMilestone = async (goalId: string, milestoneId: string, updates: Partial<GoalMilestone>) => {
+    setGoals(prev => {
+      const updated = prev.map(g => {
+        if (g.id !== goalId) return g;
+        const nextMilestones = (g.milestones || []).map(m => {
+          if (m.id === milestoneId) {
+            return { ...m, ...updates, updated_at: new Date().toISOString() };
+          }
+          return m;
+        });
+        const nextProgress = calculateGoalProgress(nextMilestones);
+        return {
+          ...g,
+          milestones: nextMilestones,
+          progress: nextProgress,
+          updated_at: new Date().toISOString(),
+        };
+      });
+      const target = updated.find(g => g.id === goalId);
+      if (target) {
+        syncEngine.dispatchMutation('goals', 'UPSERT', target, user?.id);
+        const m = target.milestones?.find(item => item.id === milestoneId);
+        if (m) {
+          syncEngine.dispatchMutation('goal_milestones', 'UPSERT', m, user?.id);
+        }
+      }
+      return updated;
+    });
+  };
+
+  const deleteGoalMilestone = async (goalId: string, milestoneId: string) => {
+    setGoals(prev => {
+      const updated = prev.map(g => {
+        if (g.id !== goalId) return g;
+        const nextMilestones = (g.milestones || []).filter(m => m.id !== milestoneId);
+        const nextProgress = calculateGoalProgress(nextMilestones);
+        return {
+          ...g,
+          milestones: nextMilestones,
+          progress: nextProgress,
+          updated_at: new Date().toISOString(),
+        };
+      });
+      const target = updated.find(g => g.id === goalId);
+      if (target) {
+        syncEngine.dispatchMutation('goals', 'UPSERT', target, user?.id);
+      }
+      return updated;
+    });
+
+    syncEngine.dispatchMutation('goal_milestones', 'DELETE', { id: milestoneId }, user?.id);
   };
 
   const addProject = async (project: Omit<Project, 'id' | 'user_id' | 'created_at'>) => {
@@ -1456,6 +1608,10 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         addGoal,
         updateGoal,
         deleteGoal,
+        addGoalMilestone,
+        toggleGoalMilestone,
+        updateGoalMilestone,
+        deleteGoalMilestone,
         projects,
         addProject,
         updateProject,
